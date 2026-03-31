@@ -1,0 +1,11 @@
+.env
+*.csv
+.cursor
+backboard*.md
+uv.lock
+start.sh
+.venv/
+__pycache__/
+.backboard/
+dist/
+*.egg-info/

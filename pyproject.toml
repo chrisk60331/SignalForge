@@ -1,0 +1,27 @@
+[project]
+name = "devpost-scraper"
+version = "0.1.0"
+description = "CLI for extracting Devpost data with Backboard tool-calling and exporting results to CSV."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "backboard-sdk>=1.5.9",
+  "beautifulsoup4>=4.12.0",
+  "httpx>=0.27.0",
+  "pydantic>=2.7.0",
+  "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+devpost-scraper = "devpost_scraper.cli:main"
+devpost-participants = "devpost_scraper.cli:participants_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devpost_scraper"]
+
+[tool.uv]
+package = true
