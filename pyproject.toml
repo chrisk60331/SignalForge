@@ -1,6 +1,6 @@
 [project]
 name = "devpost-scraper"
-version = "0.2.0"
+version = "0.3.0"
 description = "CLI for extracting Devpost data with Backboard tool-calling and exporting results to CSV."
 readme = "README.md"
 requires-python = ">=3.11"

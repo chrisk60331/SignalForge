@@ -130,6 +130,16 @@ class HarvestDB:
         self._conn.commit()
         return new
 
+    def update_participant_enrichment(self, p: HackathonParticipant) -> None:
+        """Update email/github/linkedin fields for an existing participant."""
+        self._conn.execute(
+            """UPDATE participants
+               SET email=?, github_url=?, linkedin_url=?, last_seen_at=?
+               WHERE hackathon_url=? AND username=?""",
+            (p.email, p.github_url, p.linkedin_url, _now_iso(), p.hackathon_url, p.username),
+        )
+        self._conn.commit()
+
     def mark_event_emitted(self, hackathon_url: str, username: str) -> None:
         self._conn.execute(
             "UPDATE participants SET event_emitted_at=? WHERE hackathon_url=? AND username=?",
@@ -143,6 +153,26 @@ class HarvestDB:
             """SELECT * FROM participants
                WHERE hackathon_url=? AND email != '' AND event_emitted_at IS NULL""",
             (hackathon_url,),
+        ).fetchall()
+        return [
+            HackathonParticipant(
+                hackathon_url=r["hackathon_url"],
+                hackathon_title=r["hackathon_title"] or "",
+                username=r["username"],
+                name=r["name"] or "",
+                specialty=r["specialty"] or "",
+                profile_url=r["profile_url"] or "",
+                github_url=r["github_url"] or "",
+                linkedin_url=r["linkedin_url"] or "",
+                email=r["email"] or "",
+            )
+            for r in rows
+        ]
+
+    def all_unemitted_participants(self) -> list[HackathonParticipant]:
+        """Return all participants across all hackathons with email but no event emitted."""
+        rows = self._conn.execute(
+            "SELECT * FROM participants WHERE email != '' AND event_emitted_at IS NULL"
         ).fetchall()
         return [
             HackathonParticipant(

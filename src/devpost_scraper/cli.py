@@ -389,6 +389,7 @@ async def _run_harvest(
     emit_events: bool,
     rescrape: bool,
     max_participants: int = 0,
+    max_hackathons: int = 0,
     statuses: list[str] | None = None,
 ) -> None:
     from devpost_scraper.db import HarvestDB
@@ -411,7 +412,11 @@ async def _run_harvest(
                 continue
             db.upsert_hackathon(h)
             all_hackathons.append(h)
+            if max_hackathons and len(all_hackathons) >= max_hackathons:
+                break
         print(f"[harvest] Page {page}: {len(batch)} hackathons ({len(all_hackathons)} total)", file=sys.stderr)
+        if max_hackathons and len(all_hackathons) >= max_hackathons:
+            break
 
     if not all_hackathons:
         print("[harvest] No hackathons found.", file=sys.stderr)
@@ -430,6 +435,7 @@ async def _run_harvest(
         print(f"\n[harvest] {h.title} ({h.url})", file=sys.stderr)
         print(f"  registrations: {h.registrations_count}, state: {h.open_state}", file=sys.stderr)
 
+        # Phase 2a: fast scan — scrape all participant pages (no enrichment)
         participants: list[HackathonParticipant] = []
         ppage = 1
         while True:
@@ -447,29 +453,11 @@ async def _run_harvest(
                     print(f"  [info] No participants found (may need auth)", file=sys.stderr)
                 break
 
-            print(f"  [page {ppage}] {len(batch)} participants", file=sys.stderr)
-
             if max_participants and len(participants) + len(batch) > max_participants:
                 batch = batch[:max_participants - len(participants)]
                 has_more = False
 
             for raw in batch:
-                profile_url = raw.get("profile_url", "")
-                email = ""
-                github_url = ""
-                linkedin_url = ""
-
-                if not no_email and profile_url:
-                    try:
-                        email_data = await find_participant_email(profile_url)
-                        email = email_data.get("email", "")
-                        github_url = email_data.get("github_url", "")
-                        linkedin_url = email_data.get("linkedin_url", "")
-                        if email:
-                            print(f"    [email] {email} ← {raw.get('username', '')}", file=sys.stderr)
-                    except Exception as exc:
-                        print(f"    [warn] enrich failed: {exc}", file=sys.stderr)
-
                 participants.append(
                     HackathonParticipant(
                         hackathon_url=h.url,
@@ -477,10 +465,7 @@ async def _run_harvest(
                         username=raw.get("username", ""),
                         name=raw.get("name", ""),
                         specialty=raw.get("specialty", ""),
-                        profile_url=profile_url,
-                        github_url=github_url,
-                        linkedin_url=linkedin_url,
-                        email=email,
+                        profile_url=raw.get("profile_url", ""),
                     )
                 )
 
@@ -488,22 +473,43 @@ async def _run_harvest(
                 break
             ppage += 1
 
-        if participants:
-            new_participants = db.upsert_participants(participants)
-            total_new += len(new_participants)
-            print(
-                f"  [db] {len(participants)} total, {len(new_participants)} new",
-                file=sys.stderr,
-            )
+        if not participants:
+            db.mark_hackathon_scraped(h.url)
+            continue
 
-            if emit_events and new_participants:
-                unemitted = db.get_unemitted_participants(h.url)
-                if unemitted:
-                    print(f"  [cio] Emitting events for {len(unemitted)} unemitted participants…", file=sys.stderr)
-                    await emit_hackathon_events(unemitted)
-                    for p in unemitted:
-                        db.mark_event_emitted(h.url, p.username)
-                    total_emitted += len(unemitted)
+        print(f"  [scan] {len(participants)} participants across {ppage} pages", file=sys.stderr)
+
+        # Phase 2b: upsert → detect delta
+        new_participants = db.upsert_participants(participants)
+        total_new += len(new_participants)
+        print(f"  [db] {len(new_participants)} new, {len(participants) - len(new_participants)} existing", file=sys.stderr)
+
+        # Phase 2c: email-enrich only the delta
+        if new_participants and not no_email:
+            print(f"  [enrich] enriching {len(new_participants)} new participants…", file=sys.stderr)
+            for p in new_participants:
+                if not p.profile_url:
+                    continue
+                try:
+                    email_data = await find_participant_email(p.profile_url)
+                    p.email = email_data.get("email", "")
+                    p.github_url = email_data.get("github_url", "")
+                    p.linkedin_url = email_data.get("linkedin_url", "")
+                    if p.email:
+                        print(f"    [email] {p.email} ← {p.username}", file=sys.stderr)
+                    db.update_participant_enrichment(p)
+                except Exception as exc:
+                    print(f"    [warn] enrich failed for {p.username}: {exc}", file=sys.stderr)
+
+        # Phase 2d: emit events for unemitted participants
+        if emit_events:
+            unemitted = db.get_unemitted_participants(h.url)
+            if unemitted:
+                print(f"  [cio] Emitting events for {len(unemitted)} unemitted participants…", file=sys.stderr)
+                await emit_hackathon_events(unemitted)
+                for p in unemitted:
+                    db.mark_event_emitted(h.url, p.username)
+                total_emitted += len(unemitted)
 
         db.mark_hackathon_scraped(h.url)
 
@@ -519,6 +525,29 @@ async def _run_harvest(
     if total_emitted:
         print(f"  events emitted (this run): {total_emitted}", file=sys.stderr)
     print(f"  db: {db_path}", file=sys.stderr)
+    db.close()
+
+
+async def _run_emit_unsent(db_path: str) -> None:
+    from devpost_scraper.db import HarvestDB
+
+    db = HarvestDB(db_path)
+    unemitted = db.all_unemitted_participants()
+
+    if not unemitted:
+        print("[emit-unsent] No unsent participants with emails in DB.", file=sys.stderr)
+        db.close()
+        return
+
+    print(f"[emit-unsent] {len(unemitted)} participants to emit", file=sys.stderr)
+    await emit_hackathon_events(unemitted)
+
+    for p in unemitted:
+        db.mark_event_emitted(p.hackathon_url, p.username)
+
+    stats = db.stats()
+    print(f"\n[emit-unsent] Done. {len(unemitted)} events emitted.", file=sys.stderr)
+    print(f"  events emitted (total): {stats['events_emitted']}", file=sys.stderr)
     db.close()
 
 
@@ -560,7 +589,13 @@ def harvest_main() -> None:
         "--emit-events",
         action="store_true",
         default=False,
-        help="Emit Customer.io events for delta participants",
+        help="Emit Customer.io events for delta participants during scrape",
+    )
+    parser.add_argument(
+        "--emit-unsent",
+        action="store_true",
+        default=False,
+        help="Skip scraping — just emit Customer.io events for all unsent participants in the DB",
     )
     parser.add_argument(
         "--rescrape",
@@ -576,6 +611,13 @@ def harvest_main() -> None:
         help="Cap participants scraped per hackathon (0 = unlimited, default: 0)",
     )
     parser.add_argument(
+        "--hackathons",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Only process the first N hackathons from the listing (0 = all, default: 0)",
+    )
+    parser.add_argument(
         "--status",
         action="append",
         choices=["open", "ended", "upcoming"],
@@ -587,6 +629,10 @@ def harvest_main() -> None:
 
     if args.statuses is None:
         args.statuses = ["open"]
+
+    if args.emit_unsent:
+        asyncio.run(_run_emit_unsent(db_path=args.db))
+        return
 
     jwt_token = args.jwt or os.getenv(_PARTICIPANTS_JWT_KEY, "").strip()
     if not jwt_token:
@@ -608,6 +654,7 @@ def harvest_main() -> None:
             emit_events=args.emit_events,
             rescrape=args.rescrape,
             max_participants=args.max_participants,
+            max_hackathons=args.hackathons,
             statuses=args.statuses,
         )
     )
