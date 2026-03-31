@@ -23,6 +23,7 @@ _WALKABLE_DOMAINS = {
 }
 
 _SEARCH_URL = "https://devpost.com/software/search"
+_HACKATHONS_API_URL = "https://devpost.com/api/hackathons"
 _GITHUB_API_URL = "https://api.github.com/users"
 
 
@@ -80,6 +81,58 @@ async def search_projects(query: str, page: int = 1) -> dict[str, Any]:
         "total_count": data.get("total_count", 0),
         "page": page,
         "per_page": data.get("per_page", 24),
+    }
+
+
+async def list_hackathons(
+    page: int = 1,
+    statuses: list[str] | None = None,
+) -> dict[str, Any]:
+    """Fetch one page of hackathons from the Devpost API.
+    Returns {"hackathons": [...], "total_count": int, "per_page": int}.
+    """
+    if statuses is None:
+        statuses = ["open"]
+
+    params: list[tuple[str, str]] = [("page", str(page))]
+    for s in statuses:
+        params.append(("status[]", s))
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        resp = await client.get(
+            _HACKATHONS_API_URL,
+            params=params,
+            headers={**_JSON_HEADERS, "Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    hackathons = []
+    for item in data.get("hackathons", []):
+        themes = item.get("themes") or []
+        theme_names = ", ".join(t.get("name", "") for t in themes if t.get("name"))
+
+        prize_raw = item.get("prize_amount", "") or ""
+        prize_clean = re.sub(r"<[^>]+>", "", prize_raw).strip()
+
+        hackathons.append({
+            "id": item.get("id", 0),
+            "title": item.get("title", ""),
+            "url": item.get("url", "").rstrip("/"),
+            "organization_name": item.get("organization_name", ""),
+            "open_state": item.get("open_state", ""),
+            "submission_period_dates": item.get("submission_period_dates", ""),
+            "registrations_count": item.get("registrations_count", 0),
+            "prize_amount": prize_clean,
+            "themes": theme_names,
+            "invite_only": bool(item.get("invite_only")),
+        })
+
+    meta = data.get("meta", {})
+    return {
+        "hackathons": hackathons,
+        "total_count": meta.get("total_count", 0),
+        "per_page": meta.get("per_page", 9),
     }
 
 

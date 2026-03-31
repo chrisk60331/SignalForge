@@ -1,6 +1,6 @@
 [project]
 name = "devpost-scraper"
-version = "0.1.0"
+version = "0.2.0"
 description = "CLI for extracting Devpost data with Backboard tool-calling and exporting results to CSV."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 devpost-scraper = "devpost_scraper.cli:main"
 devpost-participants = "devpost_scraper.cli:participants_main"
+devpost-harvest = "devpost_scraper.cli:harvest_main"
 
 [build-system]
 requires = ["hatchling"]

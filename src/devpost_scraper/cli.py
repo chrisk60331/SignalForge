@@ -17,13 +17,15 @@ from devpost_scraper.backboard_client import (
     ensure_assistant,
     run_in_thread,
 )
+from devpost_scraper.customerio import emit_hackathon_events
 from devpost_scraper.csv_export import write_projects
-from devpost_scraper.models import DevpostProject, HackathonParticipant
+from devpost_scraper.models import DevpostProject, Hackathon, HackathonParticipant
 from devpost_scraper.scraper import (
     find_author_email,
     find_participant_email,
     get_hackathon_participants,
     get_project_details,
+    list_hackathons,
     search_projects,
 )
 
@@ -228,6 +230,7 @@ async def _run_participants(
     jwt_token: str,
     output: str | None,
     no_email: bool,
+    emit_events: bool = False,
 ) -> None:
     all_participants: list[HackathonParticipant] = []
     page = 1
@@ -303,6 +306,9 @@ async def _run_participants(
         writer.writerows(rows)
         print(buf.getvalue())
 
+    if emit_events:
+        await emit_hackathon_events(all_participants)
+
 
 def participants_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
@@ -334,6 +340,12 @@ def participants_main() -> None:
         default=False,
         help="Skip email enrichment (faster)",
     )
+    parser.add_argument(
+        "--emit-events",
+        action="store_true",
+        default=False,
+        help="Emit devpost_hackathon events to Customer.io (requires CUSTOMERIO_SITE_ID and CUSTOMERIO_API_KEY in .env)",
+    )
     args = parser.parse_args()
 
     if not args.output:
@@ -360,5 +372,242 @@ def participants_main() -> None:
             jwt_token=jwt_token,
             output=args.output,
             no_email=args.no_email,
+            emit_events=args.emit_events,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# devpost-harvest: walk hackathon listing → scrape participants → delta emit
+# ---------------------------------------------------------------------------
+
+async def _run_harvest(
+    pages: int,
+    jwt_token: str,
+    db_path: str,
+    no_email: bool,
+    emit_events: bool,
+    rescrape: bool,
+    max_participants: int = 0,
+    statuses: list[str] | None = None,
+) -> None:
+    from devpost_scraper.db import HarvestDB
+
+    db = HarvestDB(db_path)
+
+    # Phase 1: discover hackathons
+    all_hackathons: list[Hackathon] = []
+    for page in range(1, pages + 1):
+        print(f"[harvest] Fetching hackathon listing page {page}…", file=sys.stderr)
+        data = await list_hackathons(page=page, statuses=statuses)
+        batch = data.get("hackathons", [])
+        if not batch:
+            print(f"[harvest] No hackathons on page {page}, stopping.", file=sys.stderr)
+            break
+        for raw in batch:
+            h = Hackathon(**raw)
+            if h.invite_only:
+                print(f"  [skip] invite-only: {h.title}", file=sys.stderr)
+                continue
+            db.upsert_hackathon(h)
+            all_hackathons.append(h)
+        print(f"[harvest] Page {page}: {len(batch)} hackathons ({len(all_hackathons)} total)", file=sys.stderr)
+
+    if not all_hackathons:
+        print("[harvest] No hackathons found.", file=sys.stderr)
+        db.close()
+        return
+
+    # Phase 2: for each hackathon, scrape participants
+    total_new = 0
+    total_emitted = 0
+
+    for h in all_hackathons:
+        if not rescrape and db.hackathon_scraped(h.url):
+            print(f"  [cached] {h.title} — already scraped, skipping (use --rescrape to force)", file=sys.stderr)
+            continue
+
+        print(f"\n[harvest] {h.title} ({h.url})", file=sys.stderr)
+        print(f"  registrations: {h.registrations_count}, state: {h.open_state}", file=sys.stderr)
+
+        participants: list[HackathonParticipant] = []
+        ppage = 1
+        while True:
+            try:
+                data = await get_hackathon_participants(h.url, jwt_token, page=ppage)
+            except Exception as exc:
+                print(f"  [warn] participants fetch failed page {ppage}: {exc}", file=sys.stderr)
+                break
+
+            batch = data.get("participants", [])
+            has_more = data.get("has_more", False)
+
+            if not batch:
+                if ppage == 1:
+                    print(f"  [info] No participants found (may need auth)", file=sys.stderr)
+                break
+
+            print(f"  [page {ppage}] {len(batch)} participants", file=sys.stderr)
+
+            if max_participants and len(participants) + len(batch) > max_participants:
+                batch = batch[:max_participants - len(participants)]
+                has_more = False
+
+            for raw in batch:
+                profile_url = raw.get("profile_url", "")
+                email = ""
+                github_url = ""
+                linkedin_url = ""
+
+                if not no_email and profile_url:
+                    try:
+                        email_data = await find_participant_email(profile_url)
+                        email = email_data.get("email", "")
+                        github_url = email_data.get("github_url", "")
+                        linkedin_url = email_data.get("linkedin_url", "")
+                        if email:
+                            print(f"    [email] {email} ← {raw.get('username', '')}", file=sys.stderr)
+                    except Exception as exc:
+                        print(f"    [warn] enrich failed: {exc}", file=sys.stderr)
+
+                participants.append(
+                    HackathonParticipant(
+                        hackathon_url=h.url,
+                        hackathon_title=h.title,
+                        username=raw.get("username", ""),
+                        name=raw.get("name", ""),
+                        specialty=raw.get("specialty", ""),
+                        profile_url=profile_url,
+                        github_url=github_url,
+                        linkedin_url=linkedin_url,
+                        email=email,
+                    )
+                )
+
+            if not has_more:
+                break
+            ppage += 1
+
+        if participants:
+            new_participants = db.upsert_participants(participants)
+            total_new += len(new_participants)
+            print(
+                f"  [db] {len(participants)} total, {len(new_participants)} new",
+                file=sys.stderr,
+            )
+
+            if emit_events and new_participants:
+                unemitted = db.get_unemitted_participants(h.url)
+                if unemitted:
+                    print(f"  [cio] Emitting events for {len(unemitted)} unemitted participants…", file=sys.stderr)
+                    await emit_hackathon_events(unemitted)
+                    for p in unemitted:
+                        db.mark_event_emitted(h.url, p.username)
+                    total_emitted += len(unemitted)
+
+        db.mark_hackathon_scraped(h.url)
+
+    # Summary
+    stats = db.stats()
+    print(f"\n{'=' * 60}", file=sys.stderr)
+    print(f"[harvest] Done.", file=sys.stderr)
+    print(f"  hackathons in db: {stats['hackathons']}", file=sys.stderr)
+    print(f"  participants in db: {stats['participants']}", file=sys.stderr)
+    print(f"  with email: {stats['with_email']}", file=sys.stderr)
+    print(f"  new this run: {total_new}", file=sys.stderr)
+    print(f"  events emitted (total): {stats['events_emitted']}", file=sys.stderr)
+    if total_emitted:
+        print(f"  events emitted (this run): {total_emitted}", file=sys.stderr)
+    print(f"  db: {db_path}", file=sys.stderr)
+    db.close()
+
+
+def harvest_main() -> None:
+    load_dotenv(_ENV_FILE, override=True)
+
+    parser = argparse.ArgumentParser(
+        prog="devpost-harvest",
+        description=(
+            "Walk the Devpost hackathon listing, scrape participants per hackathon, "
+            "store in SQLite, and emit Customer.io events for new (delta) participants."
+        ),
+    )
+    parser.add_argument(
+        "--pages",
+        type=int,
+        default=3,
+        help="Number of hackathon listing pages to fetch (9 hackathons/page, default: 3)",
+    )
+    parser.add_argument(
+        "--jwt",
+        metavar="TOKEN",
+        default=None,
+        help="Value of the _devpost session cookie. Falls back to DEVPOST_SESSION in .env",
+    )
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default="devpost_harvest.db",
+        help="SQLite database path (default: devpost_harvest.db)",
+    )
+    parser.add_argument(
+        "--no-email",
+        action="store_true",
+        default=False,
+        help="Skip email enrichment (much faster)",
+    )
+    parser.add_argument(
+        "--emit-events",
+        action="store_true",
+        default=False,
+        help="Emit Customer.io events for delta participants",
+    )
+    parser.add_argument(
+        "--rescrape",
+        action="store_true",
+        default=False,
+        help="Re-scrape hackathons that were already scraped in a previous run",
+    )
+    parser.add_argument(
+        "--max-participants",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Cap participants scraped per hackathon (0 = unlimited, default: 0)",
+    )
+    parser.add_argument(
+        "--status",
+        action="append",
+        choices=["open", "ended", "upcoming"],
+        default=None,
+        dest="statuses",
+        help="Hackathon status filter (repeatable, default: open). e.g. --status open --status ended",
+    )
+    args = parser.parse_args()
+
+    if args.statuses is None:
+        args.statuses = ["open"]
+
+    jwt_token = args.jwt or os.getenv(_PARTICIPANTS_JWT_KEY, "").strip()
+    if not jwt_token:
+        raise SystemExit(
+            "[error] No session cookie. Pass --jwt TOKEN or set DEVPOST_SESSION in .env\n"
+            "  Copy the _devpost cookie value from browser DevTools → Application → Cookies"
+        )
+
+    if args.jwt:
+        _ENV_FILE.touch(exist_ok=True)
+        set_key(str(_ENV_FILE), _PARTICIPANTS_JWT_KEY, args.jwt)
+
+    asyncio.run(
+        _run_harvest(
+            pages=args.pages,
+            jwt_token=jwt_token,
+            db_path=args.db,
+            no_email=args.no_email,
+            emit_events=args.emit_events,
+            rescrape=args.rescrape,
+            max_participants=args.max_participants,
+            statuses=args.statuses,
         )
     )

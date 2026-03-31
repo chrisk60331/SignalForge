@@ -6,6 +6,7 @@ uv.lock
 start.sh
 .venv/
 __pycache__/
+*.db
 .backboard/
 dist/
 *.egg-info/
