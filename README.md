@@ -1,5 +1,14 @@
 # SignalForge
 
+```
+   _____ _                   ________                    
+  / ___/(_)___ _____  ____ _/ / ____/___  _________ ____ 
+  \__ \/ / __ `/ __ \/ __ `/ / /_  / __ \/ ___/ __ `/ _ \
+ ___/ / / /_/ / / / / /_/ / / __/ / /_/ / /  / /_/ /  __/
+/____/_/\__, /_/ /_/\__,_/_/_/    \____/_/   \__, /\___/ 
+       /____/                               /____/       
+```
+
 SignalForge is a CLI toolkit for mining developer signals from public sources,
 enriching them with emails, storing results in SQLite, and emitting Customer.io events.
 

@@ -35,6 +35,29 @@ from devpost_scraper.scraper import (
 
 _ENV_FILE = Path(".env")
 _ASSISTANT_ID_KEY = "DEVPOST_ASSISTANT_ID"
+_LANDING_BANNER = r"""
+   _____ _                   ________                    
+  / ___/(_)___ _____  ____ _/ / ____/___  _________ ____ 
+  \__ \/ / __ `/ __ \/ __ `/ / /_  / __ \/ ___/ __ `/ _ \
+ ___/ / / /_/ / / / / /_/ / / __/ / /_/ / /  / /_/ /  __/
+/____/_/\__, /_/ /_/\__,_/_/_/    \____/_/   \__, /\___/ 
+       /____/                               /____/       
+"""
+_LANDING_MENU = """\
+Command Menu:
+
+  [1] signalforge             → Search Devpost projects + enrich + export CSV
+  [2] signalforge-participants → Scrape hackathon participants + export CSV
+  [3] signalforge-harvest      → Walk hackathons → scrape → SQLite → emit events
+  [4] signalforge-github-forks → Mine GitHub forks + optional email enrichment
+  [5] signalforge-rb2b         → Import RB2B CSVs + emit visited_site events
+"""
+
+
+def _print_landing() -> None:
+    print(_LANDING_BANNER.strip("\n"))
+    print()
+    print(_LANDING_MENU)
 
 # The assistant's ONLY job is to search and return raw project URLs.
 # Python handles all enrichment directly — no tool loop explosion.
@@ -202,6 +225,10 @@ async def run(search_terms: list[str], output: str | None) -> None:
 
 
 def main() -> None:
+    if len(sys.argv) == 1:
+        _print_landing()
+        print("Tip: run `signalforge --help` for full usage.")
+        return
     parser = argparse.ArgumentParser(
         prog="signalforge",
         description="Extract Devpost project data and export to CSV.",
@@ -316,6 +343,10 @@ async def _run_participants(
 
 def participants_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
+    if len(sys.argv) == 1:
+        _print_landing()
+        print("Tip: run `signalforge-participants --help` for full usage.")
+        return
 
     parser = argparse.ArgumentParser(
         prog="signalforge-participants",
@@ -524,6 +555,10 @@ async def _run_github_forks(
 
 def github_forks_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
+    if len(sys.argv) == 1:
+        _print_landing()
+        print("Tip: run `signalforge-github-forks --help` for full usage.")
+        return
 
     parser = argparse.ArgumentParser(
         prog="signalforge-github-forks",
@@ -809,6 +844,10 @@ async def _run_emit_unsent(db_path: str) -> None:
 
 def harvest_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
+    if len(sys.argv) == 1:
+        _print_landing()
+        print("Tip: run `signalforge-harvest --help` for full usage.")
+        return
 
     parser = argparse.ArgumentParser(
         prog="signalforge-harvest",
@@ -1004,6 +1043,10 @@ async def _run_rb2b(
 
 def rb2b_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
+    if len(sys.argv) == 1:
+        _print_landing()
+        print("Tip: run `signalforge-rb2b --help` for full usage.")
+        return
 
     parser = argparse.ArgumentParser(
         prog="signalforge-rb2b",
