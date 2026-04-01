@@ -1,5 +1,3 @@
-# SignalForge
-
 ```
    _____ _                   ________                    
   / ___/(_)___ _____  ____ _/ / ____/___  _________ ____ 
@@ -9,198 +7,228 @@
        /____/                               /____/       
 ```
 
-SignalForge is a CLI toolkit for mining developer signals from public sources,
-enriching them with emails, storing results in SQLite, and emitting Customer.io events.
+> **Mine developer signals. Enrich with emails. Fire into your CRM.**
 
-Commands:
+🟣 [PyPI v0.4.2](https://pypi.org/project/signalforge-cli/0.4.2/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
 
-| Command | Purpose |
+SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports — enriches every lead with real emails — then fires them straight into Customer.io. One command. Hundreds of warm leads.
+
+---
+
+## What's inside
+
+| Command | What it does |
 |---|---|
-| `signalforge` | Search Devpost projects by keyword, enrich with emails, export CSV |
-| `signalforge-participants` | Scrape a single hackathon's participant list, export CSV |
-| `signalforge-harvest` | Walk the hackathon listing, scrape all participants, store in SQLite, emit delta events |
-| `signalforge-github-forks` | Mine GitHub fork owners and optionally enrich with emails |
-| `signalforge-rb2b` | Import RB2B visitor CSVs, store in SQLite, emit `visited_site` events |
+| `signalforge` | Search Devpost by keyword → enrich with emails → export CSV |
+| `signalforge-participants` | Scrape one hackathon's participants → CSV |
+| `signalforge-harvest` | Walk the full hackathon listing → SQLite → delta Customer.io events |
+| `signalforge-github-forks` | Mine fork owners from any GitHub repo → emails → SQLite |
+| `signalforge-rb2b` | Import RB2B visitor CSVs → SQLite → `visited_site` events |
 
-## Requirements
-
-- Python 3.11+
-- [`uv`](https://docs.astral.sh/uv/)
-- A [Backboard](https://app.backboard.io) API key (for `signalforge` only)
+---
 
 ## Install
+
+```bash
+pip install signalforge-cli
+```
+
+Or with `uv` (recommended for local dev):
 
 ```bash
 uv sync
 ```
 
+---
+
+## 30-second quickstart
+
+```bash
+# 1. Copy env and fill in your keys
+cp .env.example .env
+
+# 2. Search Devpost and get a CSV of leads with emails
+signalforge "ai agents" -o leads.csv
+
+# 3. Scrape all open hackathons, enrich new participants, emit to Customer.io
+signalforge-harvest --emit-events
+```
+
+---
+
+## How it works
+
+```
+  Devpost / GitHub / RB2B
+         │
+         ▼
+  ┌─────────────────────┐
+  │   fast scan / search │  (no enrichment yet — just IDs)
+  └──────────┬──────────┘
+             │
+             ▼
+  ┌─────────────────────┐
+  │   SQLite upsert      │  detect NEW rows only (delta)
+  └──────────┬──────────┘
+             │
+             ▼
+  ┌─────────────────────┐
+  │   email enrichment   │  GitHub API → profile walking → regex
+  └──────────┬──────────┘
+             │
+             ▼
+  ┌─────────────────────┐
+  │   Customer.io emit   │  identify + track  (once per lead, ever)
+  └─────────────────────┘
+```
+
+Delta logic: on re-runs, only *new* participants get the expensive enrichment. Already-emitted leads are never re-fired. Safe to run on a cron.
+
+---
+
 ## Environment
 
-Copy `.env.example` → `.env` and fill in:
+Copy `.env.example` → `.env`:
 
 | Variable | Required for | Notes |
 |---|---|---|
 | `BACKBOARD_API_KEY` | `signalforge` | Backboard account key |
-| `DEVPOST_ASSISTANT_ID` | auto | Persisted on first run |
+| `DEVPOST_ASSISTANT_ID` | auto | Saved on first run, reused after |
 | `DEVPOST_SESSION` | `signalforge-participants`, `signalforge-harvest` | `_devpost` cookie from browser DevTools |
-| `GITHUB_TOKEN` | optional | GitHub PAT for 5000 req/hr (vs 60). No scopes needed |
+| `GITHUB_TOKEN` | optional | PAT for 5 000 req/hr vs 60. Zero scopes needed |
 | `CUSTOMERIO_SITE_ID` | `--emit-events` | Customer.io Track API |
 | `CUSTOMERIO_API_KEY` | `--emit-events` | Customer.io Track API |
 
 ---
 
-## signalforge
+## Commands
 
-Search Devpost projects by keyword, enrich each with detail page + author email, export CSV.
+### `signalforge` — Devpost project search
+
+Search Devpost by keyword, enrich each hit with the detail page + author email, export CSV.
 
 ```bash
-uv run signalforge "ai agents" --output results.csv
-uv run signalforge "climate tech" "developer tools" -o results.csv
-
-# Or via start.sh
-./start.sh "ai agents" --output results.csv
+signalforge "ai agents" --output results.csv
+signalforge "climate tech" "developer tools" -o results.csv
 ```
 
 ---
 
-## signalforge-participants
+### `signalforge-participants` — single hackathon
 
-Scrape a single hackathon's participant list and export to CSV.
+Scrape one hackathon's full participant list.
 
 ```bash
-# First time — pass session cookie
-uv run signalforge-participants "https://authorizedtoact.devpost.com/participants" \
+# First time — hand over your session cookie
+signalforge-participants "https://authorizedtoact.devpost.com/participants" \
   --jwt "<_devpost cookie value>" -o participants.csv
 
-# Reuse saved session from .env
-uv run signalforge-participants "https://authorizedtoact.devpost.com/participants" -o out.csv
+# Subsequent runs — reuses saved session
+signalforge-participants "https://authorizedtoact.devpost.com/participants" -o out.csv
 
-# Skip email enrichment
-uv run signalforge-participants "https://..." --no-email -o out.csv
+# Fast mode (skip email enrichment)
+signalforge-participants "https://..." --no-email -o out.csv
 
-# Emit Customer.io events after scrape
-uv run signalforge-participants "https://..." --emit-events -o out.csv
+# Enrich + emit to Customer.io in one shot
+signalforge-participants "https://..." --emit-events -o out.csv
 ```
 
 ---
 
-## signalforge-harvest
+### `signalforge-harvest` — full automated pipeline
 
-Automated pipeline: walk the hackathon listing → scrape participants → store in SQLite → emit Customer.io events for delta (new) participants.
-
-### Basic usage
+Walks the Devpost hackathon listing, scrapes every participant, stores in SQLite, and emits Customer.io events for net-new leads.
 
 ```bash
-# Scrape 3 pages of open hackathons (27 hackathons), enrich new participants, emit events
-uv run signalforge-harvest --emit-events
+# Standard run — open hackathons, 3 pages, enrich + emit
+signalforge-harvest --emit-events
 
-# Fast first run — scrape without email enrichment
-uv run signalforge-harvest --no-email
+# Bulk first scrape without enrichment (fast)
+signalforge-harvest --pages 5 --no-email
+
+# Catch up: emit all unsent leads already in the DB (no scraping needed)
+signalforge-harvest --emit-unsent
+
+# Re-scan for new joiners, enrich + emit delta
+signalforge-harvest --rescrape --emit-events
+
+# Include ended hackathons too
+signalforge-harvest --status open --status ended --pages 5
 ```
 
-### Flags
+**Flags**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--pages N` | `3` | Number of hackathon listing pages to fetch (9 per page) |
-| `--hackathons N` | `0` (all) | Only process the first N hackathons from the listing |
+| `--pages N` | `3` | Hackathon listing pages (9 hackathons each) |
+| `--hackathons N` | `0` (all) | Stop after the first N hackathons |
+| `--max-participants N` | `0` (unlimited) | Cap per hackathon |
 | `--jwt TOKEN` | `.env` | Devpost `_devpost` session cookie |
-| `--db PATH` | `devpost_harvest.db` | SQLite database path |
-| `--status {open,ended,upcoming}` | `open` | Hackathon status filter (repeatable) |
-| `--max-participants N` | `0` (unlimited) | Cap participants scraped per hackathon |
-| `--no-email` | off | Skip email enrichment entirely (even for new participants) |
-| `--emit-events` | off | Emit Customer.io events for unemitted participants during scrape |
-| `--emit-unsent` | off | Skip scraping — just emit events for all unsent participants in DB |
-| `--rescrape` | off | Re-scrape hackathons already scraped in a previous run |
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+| `--status` | `open` | `open` / `ended` / `upcoming` (repeatable) |
+| `--no-email` | off | Skip enrichment entirely |
+| `--emit-events` | off | Emit Customer.io events for delta participants |
+| `--emit-unsent` | off | Just emit — no scraping |
+| `--rescrape` | off | Re-scrape already-seen hackathons |
 
-### How it works
+**SQLite schema**
 
-```
-Phase 1: Discover hackathons
-  GET /api/hackathons?status[]=open → paginated JSON listing
+- **`hackathons`** — url, title, org, state, dates, registrations, prize, themes, `last_scraped_at`
+- **`participants`** — `(hackathon_url, username)` PK + enrichment fields + `first_seen_at`, `last_seen_at`, `event_emitted_at`
 
-Phase 2: Per hackathon
-  2a. Fast scan — scrape all participant pages (no enrichment, ~1 req per 20 participants)
-  2b. Upsert into SQLite → detect delta (new participants not previously in DB)
-  2c. Email-enrich delta only — GitHub API + link walking (skipped with --no-email)
-  2d. Emit Customer.io events for unemitted participants (only with --emit-events)
-```
+**Customer.io events**
 
-### Delta logic
-
-On subsequent runs, the fast scan re-fetches participant lists but only new participants
-(not previously in SQLite) get the expensive email enrichment. Already-emitted participants
-are never re-emitted. This makes re-runs fast and safe to repeat.
-
-### Common workflows
-
-```bash
-# Initial bulk scrape (no events yet)
-uv run signalforge-harvest --pages 5
-
-# Emit all unsent events from the DB (no scraping, no JWT needed)
-uv run signalforge-harvest --emit-unsent
-
-# Quick delta check on first hackathon only
-uv run signalforge-harvest --hackathons 1 --rescrape --emit-events
-
-# Re-scan all hackathons for new participants, enrich + emit
-uv run signalforge-harvest --rescrape --emit-events
-
-# Include ended hackathons
-uv run signalforge-harvest --status open --status ended
-
-# Fast delta scan (skip email enrichment for new participants too)
-uv run signalforge-harvest --rescrape --no-email
-```
-
-### SQLite schema
-
-The database (`devpost_harvest.db`) has two tables:
-
-- **`hackathons`** — id, url, title, org, state, dates, registrations, prize, themes.
-  `last_scraped_at` is set after participants are scraped.
-- **`participants`** — (hackathon_url, username) primary key, enrichment fields,
-  `first_seen_at`, `last_seen_at`, `event_emitted_at`.
-
-### Customer.io events
-
-Event name: `devpost_hackathon`. Uses participant email as the Customer.io user ID.
-
-Event data: hackathon_url, hackathon_title, username, name, specialty, profile_url, github_url, linkedin_url.
+Event name: `devpost_hackathon`. Email = Customer.io user ID.
+Payload: `hackathon_url`, `hackathon_title`, `username`, `name`, `specialty`, `profile_url`, `github_url`, `linkedin_url`.
 
 Email templates in `emails/` use `{{customer.first_name}}` and `{{event.*}}` Liquid variables.
 
 ---
 
-## signalforge-github-forks
+### `signalforge-github-forks` — GitHub fork mining
 
-Mine fork owners and enrich with emails (optional), stored in the same SQLite DB
-under a synthetic `hackathon_url` like `github:forks:owner/repo`.
+Pull every fork owner from a repo, enrich with public emails, store in the same SQLite DB.
 
 ```bash
-# Presets
-uv run signalforge-github-forks --preset mem0 --emit-events
-uv run signalforge-github-forks --preset supermemory --no-email
+# Built-in presets
+signalforge-github-forks --preset mem0 --emit-events
+signalforge-github-forks --preset supermemory --no-email
 
-# Custom repo
-uv run signalforge-github-forks --repo owner/repo --limit 1000 --mode first_n
+# Any repo
+signalforge-github-forks --repo owner/repo --limit 1000 --mode first_n
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--preset` | — | `mem0` or `supermemory` shorthand |
+| `--repo OWNER/REPO` | — | Any public GitHub repo |
+| `--limit N` | `2000` | Max forks to process |
+| `--mode` | preset-dependent | `top_by_pushed` or `first_n` |
+| `--no-email` | off | Skip email lookup |
+| `--emit-events` | off | Emit Customer.io events |
+| `--force-email` | off | Re-enrich all forks, not just new ones |
+
+---
+
+### `signalforge-rb2b` — RB2B visitor import
+
+Load RB2B daily export CSVs and fire `visited_site` events for identified visitors.
+
+```bash
+# Import and emit new identified visitors
+signalforge-rb2b daily_2026-03-*.csv --emit-events
+
+# Just drain the unsent queue
+signalforge-rb2b --emit-unsent
 ```
 
 ---
 
-## signalforge-rb2b
+## Requirements
 
-Import RB2B visitor exports into SQLite and emit Customer.io `visited_site` events
-for identified visitors.
-
-```bash
-# Import CSV(s) and emit events for newly added identified visitors
-uv run signalforge-rb2b daily_2026-03-*.csv --emit-events
-
-# Emit any unsent identified visitors from the DB
-uv run signalforge-rb2b --emit-unsent
-```
+- Python 3.11+
+- [`uv`](https://docs.astral.sh/uv/) (for local dev)
+- [Backboard](https://app.backboard.io) API key (for `signalforge` keyword search only)
 
 ---
 
