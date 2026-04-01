@@ -1,5 +1,5 @@
 [project]
-name = "SignalForge"
+name = "signalforge-cli"
 version = "0.4.1"
 description = "CLI for extracting emails and sending customer.io events"
 readme = "README.md"
