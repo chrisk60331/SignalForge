@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from devpost_scraper.models import Hackathon, HackathonParticipant
+from devpost_scraper.models import Hackathon, HackathonParticipant, Rb2bVisitor
 
 _DEFAULT_DB = "devpost_harvest.db"
 
@@ -22,6 +22,31 @@ CREATE TABLE IF NOT EXISTS hackathons (
     invite_only   INTEGER,
     first_seen_at TEXT NOT NULL,
     last_scraped_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rb2b_visitors (
+    visitor_id        TEXT PRIMARY KEY,
+    email             TEXT,
+    first_name        TEXT,
+    last_name         TEXT,
+    linkedin_url      TEXT,
+    company_name      TEXT,
+    title             TEXT,
+    industry          TEXT,
+    employee_count    TEXT,
+    estimated_revenue TEXT,
+    city              TEXT,
+    state             TEXT,
+    website           TEXT,
+    rb2b_last_seen_at TEXT,
+    rb2b_first_seen_at TEXT,
+    most_recent_referrer TEXT,
+    recent_page_count TEXT,
+    recent_page_urls  TEXT,
+    profile_type      TEXT,
+    source_file       TEXT,
+    imported_at       TEXT NOT NULL,
+    event_emitted_at  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS participants (
@@ -93,12 +118,12 @@ class HarvestDB:
         new: list[HackathonParticipant] = []
 
         for p in participants:
-            existing = self._conn.execute(
-                "SELECT 1 FROM participants WHERE hackathon_url=? AND username=?",
+            row = self._conn.execute(
+                "SELECT email FROM participants WHERE hackathon_url=? AND username=?",
                 (p.hackathon_url, p.username),
             ).fetchone()
 
-            if existing is None:
+            if row is None:
                 new.append(p)
                 self._conn.execute(
                     """INSERT INTO participants
@@ -114,6 +139,8 @@ class HarvestDB:
                     ),
                 )
             else:
+                prev_email = row["email"] or ""
+                merged_email = p.email.strip() if (p.email and p.email.strip()) else prev_email
                 self._conn.execute(
                     """UPDATE participants
                        SET hackathon_title=?, name=?, specialty=?, profile_url=?,
@@ -122,7 +149,7 @@ class HarvestDB:
                     """,
                     (
                         p.hackathon_title, p.name, p.specialty, p.profile_url,
-                        p.github_url, p.linkedin_url, p.email, now,
+                        p.github_url, p.linkedin_url, merged_email, now,
                         p.hackathon_url, p.username,
                     ),
                 )
@@ -131,12 +158,26 @@ class HarvestDB:
         return new
 
     def update_participant_enrichment(self, p: HackathonParticipant) -> None:
-        """Update email/github/linkedin fields for an existing participant."""
+        """Update email/github/linkedin fields for a single participant (commits immediately)."""
         self._conn.execute(
             """UPDATE participants
                SET email=?, github_url=?, linkedin_url=?, last_seen_at=?
                WHERE hackathon_url=? AND username=?""",
             (p.email, p.github_url, p.linkedin_url, _now_iso(), p.hackathon_url, p.username),
+        )
+        self._conn.commit()
+
+    def update_participant_enrichment_batch(self, participants: list[HackathonParticipant]) -> None:
+        """Bulk-update email/github/linkedin for multiple participants in one commit."""
+        now = _now_iso()
+        self._conn.executemany(
+            """UPDATE participants
+               SET email=?, github_url=?, linkedin_url=?, last_seen_at=?
+               WHERE hackathon_url=? AND username=?""",
+            [
+                (p.email, p.github_url, p.linkedin_url, now, p.hackathon_url, p.username)
+                for p in participants
+            ],
         )
         self._conn.commit()
 
@@ -203,6 +244,89 @@ class HarvestDB:
         )
         self._conn.commit()
 
+    # ------------------------------------------------------------------
+    # RB2B visitors
+    # ------------------------------------------------------------------
+
+    def upsert_rb2b_visitors(self, visitors: list[Rb2bVisitor]) -> list[Rb2bVisitor]:
+        """Upsert RB2B visitors. Returns only the NEW ones."""
+        now = _now_iso()
+        new: list[Rb2bVisitor] = []
+        for v in visitors:
+            row = self._conn.execute(
+                "SELECT visitor_id FROM rb2b_visitors WHERE visitor_id=?",
+                (v.visitor_id,),
+            ).fetchone()
+            if row is None:
+                new.append(v)
+                self._conn.execute(
+                    """INSERT INTO rb2b_visitors
+                           (visitor_id, email, first_name, last_name, linkedin_url,
+                            company_name, title, industry, employee_count,
+                            estimated_revenue, city, state, website,
+                            rb2b_last_seen_at, rb2b_first_seen_at,
+                            most_recent_referrer, recent_page_count, recent_page_urls,
+                            profile_type, source_file, imported_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        v.visitor_id, v.email, v.first_name, v.last_name,
+                        v.linkedin_url, v.company_name, v.title, v.industry,
+                        v.employee_count, v.estimated_revenue, v.city, v.state,
+                        v.website, v.rb2b_last_seen_at, v.rb2b_first_seen_at,
+                        v.most_recent_referrer, v.recent_page_count, v.recent_page_urls,
+                        v.profile_type, v.source_file, now,
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    """UPDATE rb2b_visitors
+                       SET email=?, first_name=?, last_name=?, linkedin_url=?,
+                           company_name=?, title=?, industry=?, employee_count=?,
+                           estimated_revenue=?, city=?, state=?, website=?,
+                           rb2b_last_seen_at=?, rb2b_first_seen_at=?,
+                           most_recent_referrer=?, recent_page_count=?,
+                           recent_page_urls=?, profile_type=?, source_file=?
+                       WHERE visitor_id=?
+                    """,
+                    (
+                        v.email, v.first_name, v.last_name, v.linkedin_url,
+                        v.company_name, v.title, v.industry, v.employee_count,
+                        v.estimated_revenue, v.city, v.state, v.website,
+                        v.rb2b_last_seen_at, v.rb2b_first_seen_at,
+                        v.most_recent_referrer, v.recent_page_count,
+                        v.recent_page_urls, v.profile_type, v.source_file,
+                        v.visitor_id,
+                    ),
+                )
+        self._conn.commit()
+        return new
+
+    def get_unemitted_rb2b_visitors(self) -> list[Rb2bVisitor]:
+        """Return identified visitors (have email) that haven't had events emitted."""
+        rows = self._conn.execute(
+            """SELECT * FROM rb2b_visitors
+               WHERE email != '' AND email IS NOT NULL AND event_emitted_at IS NULL"""
+        ).fetchall()
+        return [_row_to_rb2b(r) for r in rows]
+
+    def mark_rb2b_event_emitted(self, visitor_id: str) -> None:
+        self._conn.execute(
+            "UPDATE rb2b_visitors SET event_emitted_at=? WHERE visitor_id=?",
+            (_now_iso(), visitor_id),
+        )
+        self._conn.commit()
+
+    def rb2b_stats(self) -> dict[str, int]:
+        total = self._conn.execute("SELECT COUNT(*) FROM rb2b_visitors").fetchone()[0]
+        identified = self._conn.execute(
+            "SELECT COUNT(*) FROM rb2b_visitors WHERE email != '' AND email IS NOT NULL"
+        ).fetchone()[0]
+        emitted = self._conn.execute(
+            "SELECT COUNT(*) FROM rb2b_visitors WHERE event_emitted_at IS NOT NULL"
+        ).fetchone()[0]
+        return {"total": total, "identified": identified, "events_emitted": emitted}
+
     def stats(self) -> dict[str, int]:
         hcount = self._conn.execute("SELECT COUNT(*) FROM hackathons").fetchone()[0]
         pcount = self._conn.execute("SELECT COUNT(*) FROM participants").fetchone()[0]
@@ -222,3 +346,28 @@ class HarvestDB:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _row_to_rb2b(r: sqlite3.Row) -> Rb2bVisitor:
+    return Rb2bVisitor(
+        visitor_id=r["visitor_id"],
+        email=r["email"] or "",
+        first_name=r["first_name"] or "",
+        last_name=r["last_name"] or "",
+        linkedin_url=r["linkedin_url"] or "",
+        company_name=r["company_name"] or "",
+        title=r["title"] or "",
+        industry=r["industry"] or "",
+        employee_count=r["employee_count"] or "",
+        estimated_revenue=r["estimated_revenue"] or "",
+        city=r["city"] or "",
+        state=r["state"] or "",
+        website=r["website"] or "",
+        rb2b_last_seen_at=r["rb2b_last_seen_at"] or "",
+        rb2b_first_seen_at=r["rb2b_first_seen_at"] or "",
+        most_recent_referrer=r["most_recent_referrer"] or "",
+        recent_page_count=r["recent_page_count"] or "",
+        recent_page_urls=r["recent_page_urls"] or "",
+        profile_type=r["profile_type"] or "",
+        source_file=r["source_file"] or "",
+    )

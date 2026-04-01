@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any
+import sys
+from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+
+from devpost_scraper.models import GitHubFork
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 
@@ -25,6 +28,7 @@ _WALKABLE_DOMAINS = {
 _SEARCH_URL = "https://devpost.com/software/search"
 _HACKATHONS_API_URL = "https://devpost.com/api/hackathons"
 _GITHUB_API_URL = "https://api.github.com/users"
+_GITHUB_REPOS_API = "https://api.github.com/repos"
 
 
 def _github_headers() -> dict[str, str]:
@@ -37,6 +41,87 @@ def _github_headers() -> dict[str, str]:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def fork_from_repo_json(data: dict[str, Any]) -> GitHubFork | None:
+    """Build ``GitHubFork`` from a repo object in ``/repos/.../forks`` response."""
+    owner = data.get("owner") or {}
+    login = (owner.get("login") or "").strip()
+    full_name = (data.get("full_name") or "").strip()
+    if not login or not full_name:
+        return None
+    return GitHubFork(
+        full_name=full_name,
+        owner_login=login,
+        owner_html_url=(owner.get("html_url") or "").strip(),
+        pushed_at=(data.get("pushed_at") or "").strip(),
+        html_url=(data.get("html_url") or "").strip(),
+    )
+
+
+async def fetch_repo_forks(
+    owner: str,
+    repo: str,
+    *,
+    max_forks: int,
+    mode: Literal["top_by_pushed", "first_n"],
+    progress: bool = False,
+) -> list[GitHubFork]:
+    """
+    Paginate ``GET /repos/{owner}/{repo}/forks`` (``per_page=100``).
+
+    * ``top_by_pushed``: load every fork page, sort by ``pushed_at`` descending,
+      return the top ``max_forks``.
+    * ``first_n``: stop after collecting ``max_forks`` forks (API order: ``sort=newest``).
+    """
+    url = f"{_GITHUB_REPOS_API}/{owner}/{repo}/forks"
+    collected: list[GitHubFork] = []
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        page = 1
+        while True:
+            resp = await client.get(
+                url,
+                params={"per_page": 100, "page": page, "sort": "newest"},
+                headers=_github_headers(),
+            )
+            if resp.status_code == 403:
+                detail = resp.json().get("message", resp.text) if resp.headers.get(
+                    "content-type", ""
+                ).startswith("application/json") else resp.text
+                raise RuntimeError(
+                    f"GitHub API 403 for forks: {detail}. "
+                    "Set GITHUB_TOKEN in .env for higher rate limits."
+                )
+            resp.raise_for_status()
+            batch: list[Any] = resp.json()
+            if not batch:
+                break
+
+            for raw in batch:
+                fk = fork_from_repo_json(raw if isinstance(raw, dict) else {})
+                if fk:
+                    collected.append(fk)
+                    if mode == "first_n" and len(collected) >= max_forks:
+                        return collected[:max_forks]
+
+            if progress and page % 5 == 0:
+                print(
+                    f"[github-forks] page {page} scanned ({len(collected)} forks so far)…",
+                    file=sys.stderr,
+                )
+
+            if len(batch) < 100:
+                break
+            page += 1
+
+    if mode == "top_by_pushed":
+        collected.sort(key=lambda f: f.pushed_at or "", reverse=True)
+        collected = collected[:max_forks]
+
+    return collected
+
+
 _JSON_HEADERS = {
     "Accept": "application/json, text/javascript, */*; q=0.01",
     "X-Requested-With": "XMLHttpRequest",

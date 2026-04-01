@@ -49,6 +49,80 @@ class DevpostHackathonEvent(BaseModel):
     linkedin_url: str
 
 
+class GitHubFork(BaseModel):
+    """One fork from ``GET /repos/{owner}/{repo}/forks`` (subset of repo object)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    full_name: str
+    owner_login: str
+    owner_html_url: str = ""
+    pushed_at: str = ""
+    html_url: str = ""
+
+
+class Rb2bVisitor(BaseModel):
+    """One row from an RB2B daily export CSV."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    visitor_id: str = ""          # email if identified, else "anon:<linkedin|company>"
+    email: str = ""
+    first_name: str = ""
+    last_name: str = ""
+    linkedin_url: str = ""
+    company_name: str = ""
+    title: str = ""
+    industry: str = ""
+    employee_count: str = ""
+    estimated_revenue: str = ""
+    city: str = ""
+    state: str = ""
+    website: str = ""
+    rb2b_last_seen_at: str = ""
+    rb2b_first_seen_at: str = ""
+    most_recent_referrer: str = ""
+    recent_page_count: str = ""
+    recent_page_urls: str = ""    # raw JSON string from CSV
+    profile_type: str = ""
+    source_file: str = ""
+
+    @classmethod
+    def from_csv_row(cls, row: dict, source_file: str = "") -> "Rb2bVisitor":
+        import json as _json
+        email = row.get("WorkEmail", "").strip()
+        linkedin_url = row.get("LinkedInUrl", "").strip()
+        company_name = row.get("CompanyName", "").strip()
+        visitor_id = email or f"anon:{linkedin_url or company_name or 'unknown'}"
+        raw_urls = row.get("RecentPageUrls", "").strip()
+        try:
+            page_urls = _json.dumps(_json.loads(raw_urls)) if raw_urls else ""
+        except (ValueError, TypeError):
+            page_urls = ""
+        return cls(
+            visitor_id=visitor_id,
+            email=email,
+            first_name=row.get("FirstName", "").strip(),
+            last_name=row.get("LastName", "").strip(),
+            linkedin_url=linkedin_url,
+            company_name=company_name,
+            title=row.get("Title", "").strip(),
+            industry=row.get("Industry", "").strip(),
+            employee_count=row.get("EstimatedEmployeeCount", "").strip(),
+            estimated_revenue=row.get("EstimateRevenue", "").strip(),
+            city=row.get("City", "").strip(),
+            state=row.get("State", "").strip(),
+            website=row.get("Website", "").strip(),
+            rb2b_last_seen_at=row.get("LastSeenAt", "").strip(),
+            rb2b_first_seen_at=row.get("FirstSeenAt", "").strip(),
+            most_recent_referrer=row.get("MostRecentReferrer", "").strip(),
+            recent_page_count=row.get("RecentPageCount", "").strip(),
+            recent_page_urls=page_urls,
+            profile_type=row.get("ProfileType", "").strip(),
+            source_file=source_file,
+        )
+
+
 class DevpostProject(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

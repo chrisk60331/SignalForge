@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+_FORK_EMAIL_CONCURRENCY = 5  # concurrent GitHub API calls during fork email enrichment
+
 from dotenv import load_dotenv, set_key
 
 from devpost_scraper.backboard_client import (
@@ -17,12 +19,14 @@ from devpost_scraper.backboard_client import (
     ensure_assistant,
     run_in_thread,
 )
-from devpost_scraper.customerio import emit_hackathon_events
+from devpost_scraper.customerio import emit_hackathon_events, emit_visited_site_events
 from devpost_scraper.csv_export import write_projects
-from devpost_scraper.models import DevpostProject, Hackathon, HackathonParticipant
+from devpost_scraper.models import DevpostProject, Hackathon, HackathonParticipant, Rb2bVisitor
 from devpost_scraper.scraper import (
+    fetch_repo_forks,
     find_author_email,
     find_participant_email,
+    get_github_email,
     get_hackathon_participants,
     get_project_details,
     list_hackathons,
@@ -199,7 +203,7 @@ async def run(search_terms: list[str], output: str | None) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="devpost-scraper",
+        prog="signalforge",
         description="Extract Devpost project data and export to CSV.",
     )
     parser.add_argument(
@@ -314,7 +318,7 @@ def participants_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
 
     parser = argparse.ArgumentParser(
-        prog="devpost-participants",
+        prog="signalforge-participants",
         description="Crawl Devpost hackathon participants page and export to CSV.",
     )
     parser.add_argument(
@@ -373,6 +377,245 @@ def participants_main() -> None:
             output=args.output,
             no_email=args.no_email,
             emit_events=args.emit_events,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# devpost-github-forks: list forks → same SQLite + get_github_email enrichment
+# ---------------------------------------------------------------------------
+
+def _github_fork_source_key(owner: str, repo: str) -> str:
+    return f"github:forks:{owner}/{repo}"
+
+
+def _fork_to_participant(
+    owner: str,
+    repo: str,
+    *,
+    login: str,
+    full_name: str,
+    owner_html_url: str,
+) -> HackathonParticipant:
+    gh = f"https://github.com/{login}"
+    src = _github_fork_source_key(owner, repo)
+    title = f"GitHub forks {owner}/{repo}"
+    return HackathonParticipant(
+        hackathon_url=src,
+        hackathon_title=title,
+        username=login,
+        name=login,
+        specialty=full_name,
+        profile_url=owner_html_url or gh,
+        github_url=gh,
+        linkedin_url="",
+        email="",
+    )
+
+
+async def _run_github_forks(
+    owner: str,
+    repo: str,
+    *,
+    max_forks: int,
+    fork_mode: str,
+    db_path: str,
+    no_email: bool,
+    emit_events: bool,
+    force_email: bool,
+) -> None:
+    from devpost_scraper.db import HarvestDB
+
+    if fork_mode == "top_by_pushed":
+        mode = "top_by_pushed"
+    elif fork_mode == "first_n":
+        mode = "first_n"
+    else:
+        raise SystemExit(f"[error] Unknown fork mode: {fork_mode!r}")
+
+    db = HarvestDB(db_path)
+
+    print(
+        f"[github-forks] Listing forks for {owner}/{repo} "
+        f"(max={max_forks}, mode={fork_mode})…",
+        file=sys.stderr,
+    )
+    if fork_mode == "top_by_pushed":
+        print(
+            "[github-forks] top_by_pushed scans every fork page, then keeps the top N "
+            "by last push — this can take many minutes on popular repos.",
+            file=sys.stderr,
+        )
+    try:
+        forks = await fetch_repo_forks(
+            owner,
+            repo,
+            max_forks=max_forks,
+            mode=mode,
+            progress=fork_mode == "top_by_pushed",
+        )
+    except Exception as exc:
+        db.close()
+        raise SystemExit(f"[error] Failed to list forks: {exc}") from exc
+
+    print(f"[github-forks] Collected {len(forks)} forks", file=sys.stderr)
+
+    participants = [
+        _fork_to_participant(
+            owner,
+            repo,
+            login=f.owner_login,
+            full_name=f.full_name,
+            owner_html_url=f.owner_html_url,
+        )
+        for f in forks
+    ]
+
+    new_only = db.upsert_participants(participants)
+    print(
+        f"[github-forks] DB: {len(new_only)} new, "
+        f"{len(participants) - len(new_only)} already known",
+        file=sys.stderr,
+    )
+
+    to_enrich: list[HackathonParticipant] = participants if force_email else new_only
+
+    if not no_email and to_enrich:
+        print(
+            f"[github-forks] Email enrichment for {len(to_enrich)} accounts "
+            f"(concurrency={_FORK_EMAIL_CONCURRENCY})…",
+            file=sys.stderr,
+        )
+        sem = asyncio.Semaphore(_FORK_EMAIL_CONCURRENCY)
+
+        async def _enrich_one(p: HackathonParticipant) -> None:
+            async with sem:
+                try:
+                    email = await get_github_email(p.github_url)
+                    p.email = email
+                    if email:
+                        print(f"  [email] {email} ← {p.username}", file=sys.stderr)
+                except Exception as exc:
+                    print(f"  [warn] enrich failed for {p.username}: {exc}", file=sys.stderr)
+
+        await asyncio.gather(*(_enrich_one(p) for p in to_enrich))
+        db.update_participant_enrichment_batch(to_enrich)
+
+    src = _github_fork_source_key(owner, repo)
+    if emit_events and not no_email:
+        unemitted = db.get_unemitted_participants(src)
+        if unemitted:
+            print(
+                f"[github-forks] Emitting Customer.io for {len(unemitted)} participants…",
+                file=sys.stderr,
+            )
+            await emit_hackathon_events(unemitted)
+            for p in unemitted:
+                db.mark_event_emitted(src, p.username)
+
+    stats = db.stats()
+    print(f"\n{'=' * 60}", file=sys.stderr)
+    print("[github-forks] Done.", file=sys.stderr)
+    print(f"  participants in db: {stats['participants']}", file=sys.stderr)
+    print(f"  with email: {stats['with_email']}", file=sys.stderr)
+    print(f"  db: {db_path}", file=sys.stderr)
+    db.close()
+
+
+def github_forks_main() -> None:
+    load_dotenv(_ENV_FILE, override=True)
+
+    parser = argparse.ArgumentParser(
+        prog="signalforge-github-forks",
+        description=(
+            "Mine fork owner emails via GitHub API (fork list + get_github_email). "
+            "Stores rows in the same harvest SQLite DB as devpost-harvest "
+            "(hackathon_url=github:forks:owner/repo)."
+        ),
+    )
+    parser.add_argument(
+        "--preset",
+        choices=["mem0", "supermemory"],
+        default=None,
+        help=(
+            "mem0 → mem0ai/mem0, top 2000 by pushed_at. "
+            "supermemory → supermemoryai/supermemory, first 2000 forks (API order)."
+        ),
+    )
+    parser.add_argument(
+        "--repo",
+        metavar="OWNER/REPO",
+        default=None,
+        help="Repository (e.g. mem0ai/mem0). Not needed if --preset is set.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=2000,
+        metavar="N",
+        help="Max forks to process (default: 2000)",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["top_by_pushed", "first_n"],
+        default=None,
+        help="Fork selection: top_by_pushed = all pages then top N by last push; "
+        "first_n = first N in API order (newest forks). Default follows --preset.",
+    )
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default="devpost_harvest.db",
+        help="SQLite database path (default: devpost_harvest.db)",
+    )
+    parser.add_argument(
+        "--no-email",
+        action="store_true",
+        default=False,
+        help="Skip GitHub email mining",
+    )
+    parser.add_argument(
+        "--emit-events",
+        action="store_true",
+        default=False,
+        help="Emit Customer.io events for participants with email (this source only)",
+    )
+    parser.add_argument(
+        "--force-email",
+        action="store_true",
+        default=False,
+        help="Run email lookup for every fork owner in this run, not only DB-new rows",
+    )
+    args = parser.parse_args()
+
+    if args.preset == "mem0":
+        owner, repo = "mem0ai", "mem0"
+        fork_mode = args.mode or "top_by_pushed"
+        limit = args.limit
+    elif args.preset == "supermemory":
+        owner, repo = "supermemoryai", "supermemory"
+        fork_mode = args.mode or "first_n"
+        limit = args.limit
+    else:
+        if not args.repo or "/" not in args.repo:
+            raise SystemExit(
+                "[error] Set --preset mem0|supermemory or pass --repo owner/repo"
+            )
+        parts = args.repo.strip().split("/", 1)
+        owner, repo = parts[0], parts[1]
+        fork_mode = args.mode or "first_n"
+        limit = args.limit
+
+    asyncio.run(
+        _run_github_forks(
+            owner,
+            repo,
+            max_forks=limit,
+            fork_mode=fork_mode,
+            db_path=args.db,
+            no_email=args.no_email,
+            emit_events=args.emit_events,
+            force_email=args.force_email,
         )
     )
 
@@ -453,6 +696,8 @@ async def _run_harvest(
                     print(f"  [info] No participants found (may need auth)", file=sys.stderr)
                 break
 
+            print(f"  [scan] page {ppage}: {len(batch)} participants ({len(participants) + len(batch)} so far)…", file=sys.stderr)
+
             if max_participants and len(participants) + len(batch) > max_participants:
                 batch = batch[:max_participants - len(participants)]
                 has_more = False
@@ -487,16 +732,27 @@ async def _run_harvest(
         # Phase 2c: email-enrich only the delta
         if new_participants and not no_email:
             print(f"  [enrich] enriching {len(new_participants)} new participants…", file=sys.stderr)
+            total_targets = sum(1 for p in new_participants if p.profile_url)
+            processed = 0
             for p in new_participants:
                 if not p.profile_url:
                     continue
+                processed += 1
                 try:
                     email_data = await find_participant_email(p.profile_url)
                     p.email = email_data.get("email", "")
                     p.github_url = email_data.get("github_url", "")
                     p.linkedin_url = email_data.get("linkedin_url", "")
                     if p.email:
-                        print(f"    [email] {p.email} ← {p.username}", file=sys.stderr)
+                        print(
+                            f"    [email {processed}/{total_targets}] {p.email} ← {p.username}",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            f"    [email {processed}/{total_targets}] (none) ← {p.username}",
+                            file=sys.stderr,
+                        )
                     db.update_participant_enrichment(p)
                 except Exception as exc:
                     print(f"    [warn] enrich failed for {p.username}: {exc}", file=sys.stderr)
@@ -555,7 +811,7 @@ def harvest_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
 
     parser = argparse.ArgumentParser(
-        prog="devpost-harvest",
+        prog="signalforge-harvest",
         description=(
             "Walk the Devpost hackathon listing, scrape participants per hackathon, "
             "store in SQLite, and emit Customer.io events for new (delta) participants."
@@ -656,5 +912,140 @@ def harvest_main() -> None:
             max_participants=args.max_participants,
             max_hackathons=args.hackathons,
             statuses=args.statuses,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# devpost-rb2b: import RB2B daily CSVs → SQLite → emit visited_site events
+# ---------------------------------------------------------------------------
+
+async def _run_rb2b(
+    csv_paths: list[str],
+    db_path: str,
+    emit_events: bool,
+    emit_unsent: bool,
+) -> None:
+    import csv as _csv
+    import glob as _glob
+
+    from devpost_scraper.db import HarvestDB
+
+    db = HarvestDB(db_path)
+
+    if emit_unsent:
+        pending = db.get_unemitted_rb2b_visitors()
+        if not pending:
+            print("[rb2b] No unsent identified visitors in DB.", file=sys.stderr)
+            db.close()
+            return
+        print(f"[rb2b] Emitting {len(pending)} unsent visitors…", file=sys.stderr)
+        await emit_visited_site_events(pending)
+        for v in pending:
+            db.mark_rb2b_event_emitted(v.visitor_id)
+        stats = db.rb2b_stats()
+        print(f"[rb2b] Done. events_emitted total: {stats['events_emitted']}", file=sys.stderr)
+        db.close()
+        return
+
+    # Expand globs so the user can pass daily_*.csv directly
+    expanded: list[str] = []
+    for pattern in csv_paths:
+        matches = _glob.glob(pattern)
+        expanded.extend(sorted(matches) if matches else [pattern])
+
+    if not expanded:
+        print("[rb2b] No CSV files found.", file=sys.stderr)
+        db.close()
+        return
+
+    total_new = 0
+    total_emitted = 0
+
+    for path in expanded:
+        print(f"[rb2b] Importing {path}…", file=sys.stderr)
+        try:
+            with open(path, newline="", encoding="utf-8") as f:
+                rows = list(_csv.DictReader(f))
+        except OSError as exc:
+            print(f"  [warn] Could not read {path}: {exc}", file=sys.stderr)
+            continue
+
+        visitors = [Rb2bVisitor.from_csv_row(r, source_file=path) for r in rows]
+        new_visitors = db.upsert_rb2b_visitors(visitors)
+        total_new += len(new_visitors)
+        print(
+            f"  {len(visitors)} rows — {len(new_visitors)} new, "
+            f"{len(visitors) - len(new_visitors)} already known",
+            file=sys.stderr,
+        )
+
+        if emit_events and new_visitors:
+            identified = [v for v in new_visitors if v.email]
+            if identified:
+                print(f"  [cio] Emitting {len(identified)} new identified visitors…", file=sys.stderr)
+                sent = await emit_visited_site_events(identified)
+                total_emitted += sent
+                for v in identified:
+                    db.mark_rb2b_event_emitted(v.visitor_id)
+
+    stats = db.rb2b_stats()
+    print(f"\n{'=' * 60}", file=sys.stderr)
+    print("[rb2b] Done.", file=sys.stderr)
+    print(f"  total visitors in db: {stats['total']}", file=sys.stderr)
+    print(f"  identified (with email): {stats['identified']}", file=sys.stderr)
+    print(f"  events emitted (total): {stats['events_emitted']}", file=sys.stderr)
+    print(f"  new this run: {total_new}", file=sys.stderr)
+    if total_emitted:
+        print(f"  events emitted (this run): {total_emitted}", file=sys.stderr)
+    print(f"  db: {db_path}", file=sys.stderr)
+    db.close()
+
+
+def rb2b_main() -> None:
+    load_dotenv(_ENV_FILE, override=True)
+
+    parser = argparse.ArgumentParser(
+        prog="signalforge-rb2b",
+        description=(
+            "Import RB2B visitor CSVs into the harvest SQLite DB and emit "
+            "visited_site events to Customer.io for identified visitors."
+        ),
+    )
+    parser.add_argument(
+        "csv_files",
+        nargs="*",
+        metavar="CSV",
+        help="One or more RB2B daily export CSV files (globs accepted, e.g. 'daily_*.csv')",
+    )
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default="devpost_harvest.db",
+        help="SQLite database path (default: devpost_harvest.db)",
+    )
+    parser.add_argument(
+        "--emit-events",
+        action="store_true",
+        default=False,
+        help="Emit visited_site events to Customer.io for newly imported identified visitors",
+    )
+    parser.add_argument(
+        "--emit-unsent",
+        action="store_true",
+        default=False,
+        help="Skip CSV import — just emit events for all unsent identified visitors in the DB",
+    )
+    args = parser.parse_args()
+
+    if not args.emit_unsent and not args.csv_files:
+        parser.error("Provide at least one CSV file, or use --emit-unsent")
+
+    asyncio.run(
+        _run_rb2b(
+            csv_paths=args.csv_files,
+            db_path=args.db,
+            emit_events=args.emit_events,
+            emit_unsent=args.emit_unsent,
         )
     )

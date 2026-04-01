@@ -1,7 +1,7 @@
 [project]
-name = "devpost-scraper"
-version = "0.3.0"
-description = "CLI for extracting Devpost data with Backboard tool-calling and exporting results to CSV."
+name = "SignalForge"
+version = "0.4.0"
+description = "CLI for extracting emails and sending customer.io events"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -13,9 +13,11 @@ dependencies = [
 ]
 
 [project.scripts]
-devpost-scraper = "devpost_scraper.cli:main"
-devpost-participants = "devpost_scraper.cli:participants_main"
-devpost-harvest = "devpost_scraper.cli:harvest_main"
+signalforge = "devpost_scraper.cli:main"
+signalforge-participants = "devpost_scraper.cli:participants_main"
+signalforge-harvest = "devpost_scraper.cli:harvest_main"
+signalforge-github-forks = "devpost_scraper.cli:github_forks_main"
+signalforge-rb2b = "devpost_scraper.cli:rb2b_main"
 
 [build-system]
 requires = ["hatchling"]
