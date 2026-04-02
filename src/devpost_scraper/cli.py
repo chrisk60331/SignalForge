@@ -50,13 +50,14 @@ _LANDING_BANNER = r"""
 _LANDING_MENU = """\
 Command Menu:
 
-  [1] signalforge              → Search Devpost projects + enrich + export CSV
-  [2] signalforge-participants → Scrape hackathon participants + export CSV
-  [3] signalforge-harvest      → Walk hackathons → scrape → SQLite → emit events
-  [4] signalforge-github-forks → Mine GitHub forks + optional email enrichment
-  [5] signalforge-rb2b         → Import RB2B CSVs + emit visited_site events
-  [6] signalforge-auto         → Full daily scrape: RB2B + Harvest + all Forks (no emit)
-  [7] signalforge-gh-search    → Search GitHub repos by keyword + mine owner emails
+  [1] signalforge-devpost-search → Search Devpost projects + enrich + export CSV
+  [2] signalforge-participants   → Scrape hackathon participants + export CSV
+  [3] signalforge-harvest        → Walk hackathons → scrape → SQLite → emit events
+  [4] signalforge-github-forks   → Mine GitHub forks + optional email enrichment
+  [5] signalforge-rb2b           → Import RB2B CSVs + emit visited_site events
+  [6] signalforge-auto           → Full daily scrape: RB2B + Harvest + all Forks (no emit)
+  [7] signalforge-gh-search      → Search GitHub repos by keyword + mine owner emails
+  [8] signalforge-emit-all       → Flush all unsent events across every source at once
 """
 
 
@@ -64,6 +65,10 @@ def _print_landing() -> None:
     print(_LANDING_BANNER.strip("\n"))
     print()
     print(_LANDING_MENU)
+
+
+def landing_main() -> None:
+    _print_landing()
 
 # The assistant's ONLY job is to search and return raw project URLs.
 # Python handles all enrichment directly — no tool loop explosion.
@@ -233,10 +238,10 @@ async def run(search_terms: list[str], output: str | None) -> None:
 def main() -> None:
     if len(sys.argv) == 1:
         _print_landing()
-        print("Tip: run `signalforge --help` for full usage.")
-        return
+        print("Tip: run `signalforge-devpost-search --help` for full usage.")
+    return
     parser = argparse.ArgumentParser(
-        prog="signalforge",
+        prog="signalforge-devpost-search",
         description="Extract Devpost project data and export to CSV.",
     )
     parser.add_argument(
@@ -1222,6 +1227,91 @@ async def _run_github_forks_unsent(db_path: str) -> None:
 
     print(f"\n[github-forks] Done. {total_sent} total fork events emitted.", file=sys.stderr)
     db.close()
+
+
+async def _run_emit_all(db_path: str) -> None:
+    """Flush every unsent event across all sources: Devpost, GitHub forks, GitHub search, RB2B."""
+    from collections import defaultdict
+
+    from devpost_scraper.db import HarvestDB
+
+    db = HarvestDB(db_path)
+    grand_total = 0
+
+    # ── 1. Devpost hackathon participants ──────────────────────────────────────
+    devpost_unsent = db.all_unemitted_participants()
+    if devpost_unsent:
+        print(f"[emit-all] {len(devpost_unsent)} Devpost participants…", file=sys.stderr)
+        await emit_hackathon_events(devpost_unsent)
+        for p in devpost_unsent:
+            db.mark_event_emitted(p.hackathon_url, p.username)
+        grand_total += len(devpost_unsent)
+    else:
+        print("[emit-all] Devpost: nothing to send.", file=sys.stderr)
+
+    # ── 2. GitHub fork owners ──────────────────────────────────────────────────
+    fork_unsent = db.all_unemitted_fork_participants()
+    if fork_unsent:
+        by_repo: dict[str, list] = defaultdict(list)
+        for p in fork_unsent:
+            by_repo[p.hackathon_url].append(p)
+        for src, group in by_repo.items():
+            repo_slug = src.removeprefix("github:forks:")
+            owner, repo = repo_slug.split("/", 1)
+            print(f"[emit-all] {len(group)} fork owners ({repo_slug})…", file=sys.stderr)
+            await emit_github_fork_events(group, owner, repo)
+            for p in group:
+                db.mark_event_emitted(p.hackathon_url, p.username)
+            grand_total += len(group)
+    else:
+        print("[emit-all] GitHub forks: nothing to send.", file=sys.stderr)
+
+    # ── 3. GitHub search repo owners ──────────────────────────────────────────
+    search_unsent = db.all_unemitted_search_participants()
+    if search_unsent:
+        by_query: dict[str, list] = defaultdict(list)
+        for p in search_unsent:
+            by_query[p.hackathon_url].append(p)
+        for src, group in by_query.items():
+            query_slug = src.removeprefix("github:search:")
+            print(f"[emit-all] {len(group)} search owners (query={query_slug!r})…", file=sys.stderr)
+            await emit_github_search_events(group, query_slug)
+            for p in group:
+                db.mark_event_emitted(p.hackathon_url, p.username)
+            grand_total += len(group)
+    else:
+        print("[emit-all] GitHub search: nothing to send.", file=sys.stderr)
+
+    # ── 4. RB2B visitors ───────────────────────────────────────────────────────
+    rb2b_unsent = db.get_unemitted_rb2b_visitors()
+    if rb2b_unsent:
+        print(f"[emit-all] {len(rb2b_unsent)} RB2B visitors…", file=sys.stderr)
+        await emit_visited_site_events(rb2b_unsent)
+        for v in rb2b_unsent:
+            db.mark_rb2b_event_emitted(v.visitor_id)
+        grand_total += len(rb2b_unsent)
+    else:
+        print("[emit-all] RB2B: nothing to send.", file=sys.stderr)
+
+    print(f"\n[emit-all] Done. {grand_total} total events emitted.", file=sys.stderr)
+    db.close()
+
+
+def emit_all_main() -> None:
+    load_dotenv(_ENV_FILE, override=True)
+
+    parser = argparse.ArgumentParser(
+        prog="signalforge-emit-all",
+        description="Flush every unsent Customer.io event across all sources in one shot.",
+    )
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default="devpost_harvest.db",
+        help="SQLite database path (default: devpost_harvest.db)",
+    )
+    args = parser.parse_args()
+    asyncio.run(_run_emit_all(db_path=args.db))
 
 
 async def _run_force_email(db_path: str, concurrency: int = 5, limit: int = 0) -> None:

@@ -9,7 +9,7 @@
 
 > **Mine developer signals. Enrich with emails. Fire into your CRM.**
 
-🟣 [PyPI v0.5.0](https://pypi.org/project/signalforge-cli/0.5.0/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
+🟣 [PyPI v0.5.1](https://pypi.org/project/signalforge-cli/0.5.1/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
 
 SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports — enriches every lead with real emails — then fires them straight into Customer.io. One command. Hundreds of warm leads.
 
@@ -19,7 +19,7 @@ SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports �
 
 | Command | What it does |
 |---|---|
-| `signalforge` | Search Devpost by keyword → enrich with emails → export CSV |
+| `signalforge-devpost-search` | Search Devpost by keyword → enrich with emails → export CSV |
 | `signalforge-participants` | Scrape one hackathon's participants → CSV |
 | `signalforge-harvest` | Walk the full hackathon listing → SQLite → delta Customer.io events |
 | `signalforge-github-forks` | Mine fork owners from any GitHub repo → emails → SQLite |
@@ -49,7 +49,7 @@ uv sync
 cp .env.example .env
 
 # 2. Search Devpost and get a CSV of leads with emails
-signalforge "ai agents" -o leads.csv
+signalforge-devpost-search "ai agents" -o leads.csv
 
 # 3. Scrape all open hackathons, enrich new participants, emit to Customer.io
 signalforge-harvest --emit-events
@@ -104,13 +104,13 @@ Copy `.env.example` → `.env`:
 
 ## Commands
 
-### `signalforge` — Devpost project search
+### `signalforge-devpost-search` — Devpost project search
 
 Search Devpost by keyword, enrich each hit with the detail page + author email, export CSV.
 
 ```bash
-signalforge "ai agents" --output results.csv
-signalforge "climate tech" "developer tools" -o results.csv
+signalforge-devpost-search "ai agents" --output results.csv
+signalforge-devpost-search "climate tech" "developer tools" -o results.csv
 ```
 
 ---
@@ -270,7 +270,7 @@ signalforge-rb2b --emit-unsent
 
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/) (for local dev)
-- [Backboard](https://app.backboard.io) API key (for `signalforge` keyword search only)
+- [Backboard](https://app.backboard.io) API key (for `signalforge-devpost-search` keyword search only)
 
 ---
 

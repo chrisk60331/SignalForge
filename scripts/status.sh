@@ -237,4 +237,4 @@ fi
 if [[ -n "${total_unsent+set}" && "$total_unsent" -gt 0 ]]; then
   echo "  ⚡ Run signalforge-harvest --emit-unsent to flush the queue"
 fi
-echo ""
+uv run signalforge |tail -12
