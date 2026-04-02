@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -14,6 +16,63 @@ logger = logging.getLogger(__name__)
 
 _TRACK_API_URL = "https://track.customer.io/api/v1"
 _EVENT_NAME = "devpost_hackathon"
+_CLOSED_EVENT_NAME = "closed_hackathon"
+_ACTIVE_CUTOFF_DAYS = 30
+
+
+def _parse_close_date(submission_period_dates: str) -> datetime | None:
+    """Parse the end date from a Devpost submission_period_dates string.
+
+    Handles all observed formats:
+      "Sep 12 - Nov 29, 2011"       → Nov 29, 2011
+      "Oct 11, 2011 - Jan 25, 2012" → Jan 25, 2012
+      "Jun 12 - 13, 2011"           → Jun 13, 2011  (day-only end, inherit month)
+    """
+    if not submission_period_dates:
+        return None
+    parts = submission_period_dates.split(" - ", 1)
+    if len(parts) != 2:
+        return None
+    start_str, end_str = parts[0].strip(), parts[1].strip()
+
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(end_str, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+
+    # "13, 2011" — day-only end; inherit month from start ("Jun 12")
+    m = re.match(r"^(\d{1,2}),\s*(\d{4})$", end_str)
+    if m:
+        month_m = re.match(r"^([A-Za-z]+)", start_str)
+        if month_m:
+            month_str = month_m.group(1)
+            for fmt in ("%b %d, %Y", "%B %d, %Y"):
+                try:
+                    return datetime.strptime(
+                        f"{month_str} {m.group(1)}, {m.group(2)}", fmt
+                    ).replace(tzinfo=timezone.utc)
+                except ValueError:
+                    pass
+
+    return None
+
+
+def select_event_name(submission_period_dates: str, open_state: str = "") -> str:
+    """Return the correct Customer.io event name based on how old/open the hackathon is.
+
+    - open hackathon                    → devpost_hackathon
+    - ended, closed ≤30 days ago        → devpost_hackathon
+    - ended, closed >30 days ago        → closed_hackathon
+    - can't determine (no dates)        → devpost_hackathon  (safe default)
+    """
+    if open_state == "open":
+        return _EVENT_NAME
+    close_dt = _parse_close_date(submission_period_dates)
+    if close_dt is None:
+        return _EVENT_NAME
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_ACTIVE_CUTOFF_DAYS)
+    return _CLOSED_EVENT_NAME if close_dt < cutoff else _EVENT_NAME
 
 
 class CustomerIOService:
@@ -53,7 +112,16 @@ def _build_service() -> CustomerIOService:
     return CustomerIOService(site_id, api_key)
 
 
-async def emit_hackathon_events(participants: list[HackathonParticipant]) -> None:
+async def emit_hackathon_events(
+    participants: list[HackathonParticipant],
+    hackathon_meta: dict[str, dict] | None = None,
+) -> None:
+    """Emit Customer.io events for Devpost hackathon participants.
+
+    ``hackathon_meta`` maps hackathon_url → ``{"submission_period_dates": ..., "open_state": ...}``.
+    When provided, hackathons closed >30 days ago emit ``closed_hackathon``; all others emit
+    ``devpost_hackathon``.  Omit or pass ``None`` to always emit ``devpost_hackathon``.
+    """
     eligible = [p for p in participants if p.email]
     if not eligible:
         print("[cio] No participants with emails — skipping event emission", file=sys.stderr)
@@ -61,8 +129,15 @@ async def emit_hackathon_events(participants: list[HackathonParticipant]) -> Non
 
     svc = _build_service()
     sent = 0
+    meta = hackathon_meta or {}
 
     for p in eligible:
+        hack_info = meta.get(p.hackathon_url, {})
+        event_name = select_event_name(
+            hack_info.get("submission_period_dates", ""),
+            hack_info.get("open_state", ""),
+        )
+
         event = DevpostHackathonEvent(
             hackathon_url=p.hackathon_url,
             hackathon_title=p.hackathon_title,
@@ -79,10 +154,10 @@ async def emit_hackathon_events(participants: list[HackathonParticipant]) -> Non
         last = name_parts[1] if len(name_parts) > 1 else ""
 
         await svc.identify_user(p.email, email=p.email, first_name=first, last_name=last)
-        ok = await svc.track_event(p.email, _EVENT_NAME, event.model_dump())
+        ok = await svc.track_event(p.email, event_name, event.model_dump())
         if ok:
             sent += 1
-            print(f"  [cio] {_EVENT_NAME} → {p.email}", file=sys.stderr)
+            print(f"  [cio] {event_name} → {p.email}", file=sys.stderr)
         else:
             print(f"  [cio] FAILED {p.email}", file=sys.stderr)
 

@@ -9,7 +9,7 @@
 
 > **Mine developer signals. Enrich with emails. Fire into your CRM.**
 
-🟣 [PyPI v0.5.1](https://pypi.org/project/signalforge-cli/0.5.1/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
+🟣 [PyPI v0.6.0](https://pypi.org/project/signalforge-cli/0.6.0/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
 
 SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports — enriches every lead with real emails — then fires them straight into Customer.io. One command. Hundreds of warm leads.
 
@@ -23,8 +23,14 @@ SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports �
 | `signalforge-participants` | Scrape one hackathon's participants → CSV |
 | `signalforge-harvest` | Walk the full hackathon listing → SQLite → delta Customer.io events |
 | `signalforge-github-forks` | Mine fork owners from any GitHub repo → emails → SQLite |
+| `signalforge-gh-search` | Search GitHub repos by keyword → collect owner emails → SQLite |
 | `signalforge-rb2b` | Import RB2B visitor CSVs → SQLite → `visited_site` events |
 | `signalforge-auto` | **Full daily scrape**: RB2B today + open hackathons + all tracked GitHub repos (no emit) |
+| `signalforge-emit-all` | Flush **every** unsent event across all sources in one shot |
+| `signalforge-emit-batch` | Emit up to `--batch-size` events per source bucket — cron-friendly |
+| `signalforge-auto-batch` | **One cron command**: daily scrape + emit batch in a single run |
+| `signalforge-lookup` | Search the DB by email, name, or username — show full lead context |
+| `signalforge-assistant` | Interactive AI analyst REPL over your lead database |
 
 ---
 
@@ -184,8 +190,14 @@ signalforge-harvest --export-linkedin -o linkedin_leads.csv
 
 **Customer.io events**
 
-Event name: `devpost_hackathon`. Email = Customer.io user ID.
-Payload: `hackathon_url`, `hackathon_title`, `username`, `name`, `specialty`, `profile_url`, `github_url`, `linkedin_url`.
+Event name depends on how old the hackathon is:
+
+| Condition | Event name |
+|---|---|
+| Hackathon is open, or closed within the last 30 days | `devpost_hackathon` |
+| Hackathon closed more than 30 days ago | `closed_hackathon` |
+
+Email = Customer.io user ID. Payload: `hackathon_url`, `hackathon_title`, `username`, `name`, `specialty`, `profile_url`, `github_url`, `linkedin_url`.
 
 Email templates in `emails/` use `{{customer.first_name}}` and `{{event.*}}` Liquid variables.
 
@@ -263,6 +275,151 @@ signalforge-rb2b daily_2026-03-*.csv --emit-events
 # Just drain the unsent queue
 signalforge-rb2b --emit-unsent
 ```
+
+---
+
+### `signalforge-gh-search` — GitHub repo search
+
+Search GitHub repos by keyword, collect owner emails via the GitHub API, and store results in the harvest DB (`hackathon_url = github:search:<query-slug>`).
+
+```bash
+# Search and enrich owners
+signalforge-gh-search "ai memory" --max 200 --emit-events
+
+# Top results by stars (default), forks, or recency
+signalforge-gh-search "langchain rag" --sort forks --max 500
+
+# Skip enrichment now, drain later
+signalforge-gh-search "vector database" --no-email
+signalforge-gh-search --emit-unsent
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `query` | — | GitHub search query (e.g. `"AI memory"`) |
+| `--max N` | `100` | Max repos to retrieve (GitHub caps at 1000) |
+| `--sort` | `stars` | `stars` / `forks` / `updated` |
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+| `--no-email` | off | Skip email enrichment |
+| `--force-email` | off | Re-enrich owners already in the DB |
+| `--emit-events` | off | Emit `github_search` events to Customer.io |
+| `--emit-limit N` | `0` (all) | Cap `--emit-events` to N owners |
+| `--emit-unsent` | off | Skip search — flush unsent queue only |
+
+---
+
+### `signalforge-emit-all` — flush all unsent events
+
+Drain the unsent queue for every source in one shot: Devpost hackathons, GitHub fork owners, GitHub search owners, and RB2B visitors.
+
+```bash
+signalforge-emit-all
+signalforge-emit-all --db my_harvest.db
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+
+---
+
+### `signalforge-auto-batch` — daily scrape + emit in one command
+
+The single cron entry you actually need. Runs the full daily scrape (`signalforge-auto`) and then immediately emits one batch from every source bucket (`signalforge-emit-batch`).
+
+```bash
+# Add to crontab — runs at 6 AM daily
+0 6 * * * /path/to/venv/bin/signalforge-auto-batch >> /var/log/signalforge.log 2>&1
+
+# Manual run with defaults
+signalforge-auto-batch
+
+# Smaller emit batch (useful during warm-up while the queue is large)
+signalforge-auto-batch --batch-size 500
+
+# Skip email enrichment for a faster run
+signalforge-auto-batch --no-email --batch-size 1000
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--batch-size N` | `2000` | Max events to emit per source bucket after scrape |
+| `--pages N` | `100` | Devpost listing pages to fetch |
+| `--fork-limit N` | `5000` | Max forks per GitHub repo |
+| `--fetch-date YYYY-MM-DD` | today | RB2B export date |
+| `--no-email` | off | Skip email enrichment |
+| `--jwt TOKEN` | `.env` | Devpost session cookie |
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+
+---
+
+### `signalforge-emit-batch` — batched emit (cron-friendly)
+
+Emit up to `--batch-size` events from each of four source buckets in a single run. Unlike `signalforge-emit-all` (which drains the entire queue), this lets you pace delivery — run it on a cron until the queue is empty.
+
+| Bucket | Event name | Source |
+|---|---|---|
+| Devpost open / recently-closed (≤30 days) | `devpost_hackathon` | harvest DB |
+| Devpost old-closed (>30 days) | `closed_hackathon` | harvest DB |
+| GitHub fork owners | `github_fork` | harvest DB |
+| RB2B identified visitors | `visited_site` | harvest DB |
+
+```bash
+# Emit up to 2000 per bucket (default)
+signalforge-emit-batch
+
+# Smaller batches — good for warming up or rate-limiting
+signalforge-emit-batch --batch-size 500
+
+# Custom DB
+signalforge-emit-batch --batch-size 1000 --db my_harvest.db
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--batch-size N` | `2000` | Max events to emit per source bucket |
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+
+---
+
+### `signalforge-lookup` — contact lookup
+
+Search the SQLite DB by email address, name, or username and print the full lead record with hackathon context.
+
+```bash
+signalforge-lookup alice@example.com
+signalforge-lookup "Alice Smith"
+signalforge-lookup alicedev
+signalforge-lookup alice --db my_harvest.db
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `query` | — | Email, name, or username to search |
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+
+---
+
+### `signalforge-assistant` — AI analyst REPL
+
+Interactive natural-language interface to your lead database powered by a Backboard AI assistant. Ask questions, query leads, and get summaries without writing SQL.
+
+```bash
+signalforge-assistant
+signalforge-assistant --db my_harvest.db
+```
+
+```
+> How many participants have emails from the last 30 days?
+> Show me leads from AI-themed hackathons with a GitHub URL
+> Which hackathons have the most unemitted participants?
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+
+Requires `BACKBOARD_API_KEY`. Model defaults to `gpt-4o-mini`; override with `BACKBOARD_MODEL` and `BACKBOARD_LLM_PROVIDER`.
 
 ---
 

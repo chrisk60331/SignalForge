@@ -1,6 +1,6 @@
 [project]
 name = "signalforge-cli"
-version = "0.5.1"
+version = "0.6.0"
 description = "CLI for extracting emails and sending customer.io events"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -10,6 +10,7 @@ dependencies = [
   "httpx>=0.27.0",
   "pydantic>=2.7.0",
   "python-dotenv>=1.0.1",
+  "rich>=14.3.3",
 ]
 
 [project.scripts]
@@ -23,6 +24,9 @@ signalforge-auto = "devpost_scraper.cli:auto_main"
 signalforge-lookup = "devpost_scraper.cli:lookup_main"
 signalforge-gh-search = "devpost_scraper.cli:github_search_main"
 signalforge-emit-all = "devpost_scraper.cli:emit_all_main"
+signalforge-emit-batch = "devpost_scraper.cli:emit_batch_main"
+signalforge-auto-batch = "devpost_scraper.cli:auto_batch_main"
+signalforge-assistant = "devpost_scraper.cli:assistant_main"
 
 [build-system]
 requires = ["hatchling"]

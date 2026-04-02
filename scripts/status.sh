@@ -42,6 +42,12 @@ fi
 header() { printf "\n  %s\n  %s\n" "$1" "$(printf -- '-%.0s' {1..54})"; }
 row()    { printf "    %-32s  %s\n" "$1" "$2"; }
 sep()    { printf "    %s\n" "$(printf '.%.0s' {1..52})"; }
+comma()  {
+  awk -v n="${1:-0}" 'BEGIN {
+    while (n > 999) { r = "," sprintf("%03d", n % 1000) r; n = int(n / 1000) }
+    print n r
+  }'
+}
 
 
 # ── banner ────────────────────────────────────────────────────────────────────
@@ -122,8 +128,8 @@ fork_data=$(_sqlite -separator '|' \
 
 # ── Render: Devpost hackathons ────────────────────────────────────────────────
 header "🏆  Devpost — Hackathons"
-printf "    %-32s %-6s %-6s %-7s %-11s \n"    "Scraped" "Total" "Emails" "Outbox"  "Last Updated"
-printf "    %-32s %-6s %-6s %-7s %-11s \n"   "$scraped_h / $total_h" "$total_p" "$w_email_p" "$unsent_p"  "$last_h"
+printf "    %-32s %-9s %-9s %-9s %-11s \n"    "Scraped" "Total" "Emails" "Outbox"  "Last Updated"
+printf "    %-32s %-9s %-9s %-9s %-11s \n"   "$(comma $scraped_h) / $(comma $total_h)" "$(comma $total_p)" "$(comma $w_email_p)" "$(comma $unsent_p)"  "$last_h"
 
 
 # ── Render: GitHub forks ──────────────────────────────────────────────────────
@@ -135,14 +141,14 @@ else
   total_f_final=0
   w_email_f_final=0
   unsent_f_final=0
-  printf "    %-32s %-6s %-6s %-6s  %-16s\n" "Repo" "Total" "Emails" "Outbox" "Last scraped"
+  printf "    %-32s %-9s %-9s %-9s  %-16s\n" "Repo" "Total" "Emails" "Outbox" "Last scraped"
   while IFS='|' read -r src total_f w_email_f unsent_f last_f; do
-    printf "     %-31s %-6s %-6s %-6s  %-16s\n" "${src#github:forks:}" "$total_f" "$w_email_f" "$unsent_f" "$last_f"
+    printf "     %-31s %-9s %-9s %-9s  %-16s\n" "${src#github:forks:}" "$(comma $total_f)" "$(comma $w_email_f)" "$(comma $unsent_f)" "$last_f"
     total_f_final=$((total_f_final + total_f))
     w_email_f_final=$((w_email_f_final + w_email_f))
     unsent_f_final=$((unsent_f_final + unsent_f))
   done <<< "$fork_data"
-  printf "    %-32s %-6s %-6s %-6s\n" "Total:" "$total_f_final" "$w_email_f_final" "$unsent_f_final"
+  printf "    %-32s %-9s %-9s %-9s\n" "Total:" "$(comma $total_f_final)" "$(comma $w_email_f_final)" "$(comma $unsent_f_final)"
 fi
 
 # ── Render: RB2B visitors ─────────────────────────────────────────────────────
@@ -153,54 +159,8 @@ if [[ -n "${rb2b_exists+set}" && "$rb2b_exists" -eq 0 ]]; then
 elif [[ "$total_v" -eq 0 ]]; then
   echo "    No RB2B data yet — run signalforge-rb2b to import."
 else
-  printf "    %-32s %-6s %-6s %-7s %-33s \n"  "Visit window" "Total"     "Emails"        "Outbox"    "Last imported at"
-  printf "    %-34s %-6s %-6s %-7s %-33s \n" "${visit_first_v} → ${visit_last_v}"  "$total_v" "$identified_v" "$unsent_v" "$last_v"
-fi
-CIO_APP_KEY="${CUSTOMERIO_APP_API_KEY:-}"
-if [[ -z "$CIO_APP_KEY" ]]; then
-  echo ""
-else
-  # ── Customer.io campaign stats ────────────────────────────────────────────────
-  header "📬  Customer.io — Campaigns"
-
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  ENV_FILE="$SCRIPT_DIR/../.env"
-  [[ -f "$ENV_FILE" ]] && set -a && source "$ENV_FILE" && set +a
-
-  CIO_RESP=$(curl -s --max-time 8 \
-    -H "Authorization: Bearer $CIO_APP_KEY" \
-    "https://api.customer.io/v1/campaigns?limit=20" 2>/dev/null)
-
-  HTTP_ERR=$(echo "$CIO_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('errors',''))" 2>/dev/null)
-
-  if [[ -n "$HTTP_ERR" && "$HTTP_ERR" != "[]" && "$HTTP_ERR" != "" ]]; then
-    echo "    API error: $HTTP_ERR"
-  else
-    echo "$CIO_RESP" | python3 - <<'PYEOF'
-import sys, json
-
-data = json.load(sys.stdin)
-campaigns = data.get("campaigns", [])
-
-if not campaigns:
-    print("    No campaigns found.")
-else:
-    campaigns.sort(key=lambda c: c.get("updated", 0), reverse=True)
-    fmt = "    {:<38}  {:>6}  {:>6}  {:>6}  {:>6}"
-    print(fmt.format("Campaign", "Sent", "Opens", "Clicks", "Unsubs"))
-    print("    " + "-" * 66)
-    for c in campaigns[:10]:
-        name = c.get("name", "—")[:36]
-        m = c.get("metrics", {})
-        sent    = m.get("delivered", m.get("sent", "—"))
-        opens   = m.get("opened", "—")
-        clicks  = m.get("clicked", "—")
-        unsubs  = m.get("unsubscribed", "—")
-        print(fmt.format(name, sent, opens, clicks, unsubs))
-    if len(campaigns) > 10:
-        print(f"\n    ... and {len(campaigns) - 10} more")
-PYEOF
-  fi
+  printf "    %-32s %-9s %-9s %-9s %-33s \n"  "Visit window" "Total"     "Emails"        "Outbox"    "Last imported at"
+  printf "    %-34s %-9s %-9s %-9s %-33s \n" "${visit_first_v} → ${visit_last_v}"  "$(comma $total_v)" "$(comma $identified_v)" "$(comma $unsent_v)" "$last_v"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -225,16 +185,80 @@ if [[ -n "${p_leads+set}" && -n "${r_leads+set}" && -n "${p_unsent+set}" && -n "
   done
   [[ -z "$last_scraped" ]] && last_scraped="never"
 
-  printf "    %-32s %-6s %-6s %-7s %-6s \n" "Emails sent today"  "Total" "Emails" "Outbox" "Last Updated"
-  printf "    %-32s %-6s %-6s %-7s %-6s \n" "$emitted_today"  "$sdufishdfu" "$total_leads" "$total_unsent" "$last_scraped"
-  printf "\n"
-
+  printf "    %-32s %-9s %-9s %-9s %-6s \n" "Emails sent today"  "Total" "Emails" "Outbox" "Last Updated"
+  printf "    %-32s %-9s %-9s %-9s %-6s \n" "$(comma $emitted_today)"  "$(comma $sdufishdfu)" "$(comma $total_leads)" "$(comma $total_unsent)" "$last_scraped"
 
 else
     row "Total leads with email"    "Connecting to database..."
     row "Total unsent events"       "Connecting to database..."
 fi 
-if [[ -n "${total_unsent+set}" && "$total_unsent" -gt 0 ]]; then
-  echo "  ⚡ Run signalforge-harvest --emit-unsent to flush the queue"
+# ── Customer.io campaign stats ────────────────────────────────────────────────
+source .env
+CIO_APP_KEY="${CUSTOMERIO_APP_API_KEY:-}"
+if [[ -z "$CIO_APP_KEY" ]]; then
+  echo ""
+else
+  header "📬  Customer.io — Campaigns"
+
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  ENV_FILE="$SCRIPT_DIR/../.env"
+  [[ -f "$ENV_FILE" ]] && set -a && source "$ENV_FILE" && set +a
+
+  CIO_RESP=$(curl -s --max-time 8 \
+    -H "Authorization: Bearer $CIO_APP_KEY" \
+    "https://api.customer.io/v1/campaigns?limit=20" )
+  HTTP_ERR=$(echo "$CIO_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('errors',''))" 2>/dev/null)
+
+  if [[ -n "$HTTP_ERR" && "$HTTP_ERR" != "[]" && "$HTTP_ERR" != "" ]]; then
+    echo "    API error: $HTTP_ERR"
+  else
+    CIO_JSON="$CIO_RESP" CIO_APP_KEY="$CIO_APP_KEY" python3 - <<'PYEOF'
+import os, json
+from urllib.request import Request, urlopen
+
+key      = os.environ['CIO_APP_KEY']
+data     = json.loads(os.environ['CIO_JSON'])
+campaigns = data.get("campaigns", [])
+campaigns.sort(key=lambda c: c.get("updated", 0), reverse=True)
+
+def fetch_metrics(cid):
+    url = f"https://api.customer.io/v1/campaigns/{cid}/metrics"
+    req = Request(url, headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urlopen(req, timeout=8) as r:
+            d = json.loads(r.read())
+        s = d.get("metric", {}).get("series", {})
+        return {k: sum(v) for k, v in s.items()}
+    except Exception:
+        return {}
+
+if not campaigns:
+    print("    No campaigns found.")
+else:
+    from concurrent.futures import ThreadPoolExecutor
+    ids = [c["id"] for c in campaigns[:10]]
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        results = list(ex.map(fetch_metrics, ids))
+    metrics = dict(zip(ids, results))
+
+    fmt = "    {:<29}  {:>8}  {:>8}  {:>7}  {:>14}  {:>6}"
+    print(fmt.format("Campaign", "Sent", "Deliv", "Click", "Convert", "Unsubs"))
+    for c in campaigns[:10]:
+        name = c.get("name", "—")[:27]
+        m = metrics.get(c["id"], {})
+        sent      = m.get("sent", 0)
+        delivered = m.get("delivered", 0)
+        clicked   = m.get("human_clicked", m.get("clicked", 0))
+        converted = m.get("converted", 0)
+        unsubs    = m.get("unsubscribed", 0)
+        pct = f"{converted/delivered*100:.1f}%" if delivered else "—"
+        conv_col  = f"{converted:,} ({pct})"
+        print(fmt.format(name, f"{sent:,}", f"{delivered:,}", f"{clicked:,}", conv_col, f"{unsubs:,}"))
+    if len(campaigns) > 10:
+        print(f"\n    ... and {len(campaigns) - 10:,} more")
+PYEOF
+  fi
 fi
+  printf "\n"
+
 uv run signalforge |tail -12

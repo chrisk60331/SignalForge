@@ -327,6 +327,23 @@ class HarvestDB:
             for r in rows
         ]
 
+    def get_hackathon_meta(self, urls: list[str]) -> dict[str, dict]:
+        """Return a mapping of hackathon_url → {submission_period_dates, open_state} for the given URLs."""
+        if not urls:
+            return {}
+        placeholders = ",".join("?" * len(urls))
+        rows = self._conn.execute(
+            f"SELECT url, submission_period_dates, open_state FROM hackathons WHERE url IN ({placeholders})",
+            urls,
+        ).fetchall()
+        return {
+            r["url"]: {
+                "submission_period_dates": r["submission_period_dates"] or "",
+                "open_state": r["open_state"] or "",
+            }
+            for r in rows
+        }
+
     def hackathon_scraped(self, hackathon_url: str) -> bool:
         row = self._conn.execute(
             "SELECT last_scraped_at FROM hackathons WHERE url=?",

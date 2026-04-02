@@ -77,7 +77,7 @@ async def run_in_thread(
     user_message: str,
     tool_handlers: Mapping[str, ToolHandler],
     llm_provider: str = "openai",
-    model_name: str = "gpt-4o-mini",
+    model_name: str = "gpt-5.4",
     max_tool_rounds: int = 6,
 ) -> str:
     """Create a thread, send a message via streaming, execute the tool loop."""
@@ -87,6 +87,7 @@ async def run_in_thread(
         thread_id=thread.thread_id,
         content=user_message,
         stream=True,
+        web_search="Auto",
         llm_provider=llm_provider,
         model_name=model_name,
     )
