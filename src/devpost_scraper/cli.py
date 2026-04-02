@@ -50,15 +50,30 @@ _LANDING_BANNER = r"""
 _LANDING_MENU = """\
 Command Menu:
 
-  [1] signalforge-devpost-search → Search Devpost projects + enrich + export CSV
-  [2] signalforge-participants   → Scrape hackathon participants + export CSV
-  [3] signalforge-harvest        → Walk hackathons → scrape → SQLite → emit events
-  [4] signalforge-github-forks   → Mine GitHub forks + optional email enrichment
-  [5] signalforge-rb2b           → Import RB2B CSVs + emit visited_site events
-  [6] signalforge-auto           → Full daily scrape: RB2B + Harvest + all Forks (no emit)
-  [7] signalforge-gh-search      → Search GitHub repos by keyword + mine owner emails
-  [8] signalforge-emit-all       → Flush all unsent events across every source at once
-  [9] signalforge-assistant      → Interactive AI analyst: query DB, export CSV, insights
+  ── Scraping ────────────────────────────────────────────────────────────────
+  [1]  signalforge-devpost-search  → Search Devpost projects + enrich + export CSV
+  [2]  signalforge-participants    → Scrape one hackathon's participants + export CSV
+  [3]  signalforge-harvest         → Walk hackathons → scrape → SQLite → emit events
+  [4]  signalforge-github-forks    → Mine GitHub fork owners + optional email enrichment
+  [5]  signalforge-gh-search       → Search GitHub repos by keyword + mine owner emails
+  [6]  signalforge-rb2b            → Import RB2B visitor CSVs + emit visited_site events
+
+  ── Automation ──────────────────────────────────────────────────────────────
+  [7]  signalforge-auto            → Full daily scrape: RB2B + Harvest + all Forks (no emit)
+  [8]  signalforge-auto-batch      → Daily scrape + emit batch in one cron command
+
+  ── Event Emission ──────────────────────────────────────────────────────────
+  [9]  signalforge-emit-all        → Flush all unsent events across every source at once
+  [10] signalforge-emit-batch      → Emit up to --batch-size events per source (cron-friendly)
+
+  ── Campaign Management ─────────────────────────────────────────────────────
+  [11] signalforge-campaigns       → Sync email HTML with Customer.io campaign actions
+                                     Subcommands: list-campaigns · get-campaign · show-campaign
+                                                  get-actions · update-all · get · update
+
+  ── Utilities ───────────────────────────────────────────────────────────────
+  [12] signalforge-lookup          → Search the DB by email, name, or username
+  [13] signalforge-assistant       → Interactive AI analyst: query DB, export CSV, insights
 """
 
 # ─── ANSI terminal helpers ──────────────────────────────────────────────────
