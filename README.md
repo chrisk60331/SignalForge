@@ -9,7 +9,7 @@
 
 > **Mine developer signals. Enrich with emails. Fire into your CRM.**
 
-🟣 [PyPI v0.4.2](https://pypi.org/project/signalforge-cli/0.4.2/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
+🟣 [PyPI v0.5.0](https://pypi.org/project/signalforge-cli/0.5.0/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
 
 SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports — enriches every lead with real emails — then fires them straight into Customer.io. One command. Hundreds of warm leads.
 
@@ -24,6 +24,7 @@ SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports �
 | `signalforge-harvest` | Walk the full hackathon listing → SQLite → delta Customer.io events |
 | `signalforge-github-forks` | Mine fork owners from any GitHub repo → emails → SQLite |
 | `signalforge-rb2b` | Import RB2B visitor CSVs → SQLite → `visited_site` events |
+| `signalforge-auto` | **Full daily scrape**: RB2B today + open hackathons + all tracked GitHub repos (no emit) |
 
 ---
 
@@ -154,6 +155,9 @@ signalforge-harvest --rescrape --emit-events
 
 # Include ended hackathons too
 signalforge-harvest --status open --status ended --pages 5
+
+# Export everyone who has a LinkedIn URL but no email yet (CSV for manual outreach)
+signalforge-harvest --export-linkedin -o linkedin_leads.csv
 ```
 
 **Flags**
@@ -170,6 +174,8 @@ signalforge-harvest --status open --status ended --pages 5
 | `--emit-events` | off | Emit Customer.io events for delta participants |
 | `--emit-unsent` | off | Just emit — no scraping |
 | `--rescrape` | off | Re-scrape already-seen hackathons |
+| `--export-linkedin` | off | Export CSV of all leads with LinkedIn but no email |
+| `--output / -o PATH` | stdout | Output path for `--export-linkedin` |
 
 **SQLite schema**
 
@@ -207,6 +213,42 @@ signalforge-github-forks --repo owner/repo --limit 1000 --mode first_n
 | `--no-email` | off | Skip email lookup |
 | `--emit-events` | off | Emit Customer.io events |
 | `--force-email` | off | Re-enrich all forks, not just new ones |
+
+---
+
+### `signalforge-auto` — full daily scrape
+
+Runs all three scrapers in sequence, then exits without emitting events. Use this as your daily cron job; fire `--emit-unsent` on each source afterwards.
+
+**What it runs:**
+1. `signalforge-rb2b --fetch-date TODAY` — pulls today's RB2B visitor export
+2. `signalforge-harvest --status open --pages 100` — walks all open Devpost hackathons
+3. `signalforge-github-forks --repo OWNER/REPO --limit 5000` — for every repo already tracked in the DB
+
+```bash
+# Standard daily run
+signalforge-auto
+
+# Custom date / page depth
+signalforge-auto --fetch-date 2026-03-31 --pages 50 --fork-limit 2000
+
+# Skip email enrichment (much faster, enrich later with --force-email)
+signalforge-auto --no-email
+
+# Then flush the queue when ready
+signalforge-harvest --emit-unsent
+signalforge-github-forks --emit-unsent
+signalforge-rb2b --emit-unsent
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+| `--pages N` | `100` | Devpost listing pages |
+| `--fork-limit N` | `5000` | Max forks per GitHub repo |
+| `--fetch-date YYYY-MM-DD` | today | RB2B export date |
+| `--no-email` | off | Skip email enrichment |
+| `--jwt TOKEN` | `.env` | Devpost session cookie |
 
 ---
 

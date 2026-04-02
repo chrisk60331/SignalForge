@@ -211,9 +211,11 @@ class HarvestDB:
         ]
 
     def all_unemitted_participants(self) -> list[HackathonParticipant]:
-        """Return all participants across all hackathons with email but no event emitted."""
+        """Return Devpost-only participants with email but no event emitted (excludes GitHub forks)."""
         rows = self._conn.execute(
-            "SELECT * FROM participants WHERE email != '' AND event_emitted_at IS NULL"
+            "SELECT * FROM participants "
+            "WHERE email != '' AND event_emitted_at IS NULL "
+            "AND hackathon_url NOT LIKE 'github:forks:%'"
         ).fetchall()
         return [
             HackathonParticipant(
@@ -226,6 +228,101 @@ class HarvestDB:
                 github_url=r["github_url"] or "",
                 linkedin_url=r["linkedin_url"] or "",
                 email=r["email"] or "",
+            )
+            for r in rows
+        ]
+
+    def all_unemitted_fork_participants(self) -> list[HackathonParticipant]:
+        """Return GitHub fork owners with email but no event emitted, grouped by source repo."""
+        rows = self._conn.execute(
+            "SELECT * FROM participants "
+            "WHERE email != '' AND event_emitted_at IS NULL "
+            "AND hackathon_url LIKE 'github:forks:%' "
+            "ORDER BY hackathon_url"
+        ).fetchall()
+        return [
+            HackathonParticipant(
+                hackathon_url=r["hackathon_url"],
+                hackathon_title=r["hackathon_title"] or "",
+                username=r["username"],
+                name=r["name"] or "",
+                specialty=r["specialty"] or "",
+                profile_url=r["profile_url"] or "",
+                github_url=r["github_url"] or "",
+                linkedin_url=r["linkedin_url"] or "",
+                email=r["email"] or "",
+            )
+            for r in rows
+        ]
+
+    def all_unemitted_search_participants(self) -> list[HackathonParticipant]:
+        """Return GitHub search repo owners with email but no event emitted, grouped by query."""
+        rows = self._conn.execute(
+            "SELECT * FROM participants "
+            "WHERE email != '' AND event_emitted_at IS NULL "
+            "AND hackathon_url LIKE 'github:search:%' "
+            "ORDER BY hackathon_url"
+        ).fetchall()
+        return [
+            HackathonParticipant(
+                hackathon_url=r["hackathon_url"],
+                hackathon_title=r["hackathon_title"] or "",
+                username=r["username"],
+                name=r["name"] or "",
+                specialty=r["specialty"] or "",
+                profile_url=r["profile_url"] or "",
+                github_url=r["github_url"] or "",
+                linkedin_url=r["linkedin_url"] or "",
+                email=r["email"] or "",
+            )
+            for r in rows
+        ]
+
+    def get_participants_with_linkedin_no_email(self) -> list[HackathonParticipant]:
+        """Return all participants that have a linkedin_url but no email, across all sources."""
+        rows = self._conn.execute(
+            """SELECT * FROM participants
+               WHERE (linkedin_url IS NOT NULL AND linkedin_url != '')
+                 AND (email IS NULL OR email = '')
+               ORDER BY hackathon_url, username"""
+        ).fetchall()
+        return [
+            HackathonParticipant(
+                hackathon_url=r["hackathon_url"],
+                hackathon_title=r["hackathon_title"] or "",
+                username=r["username"],
+                name=r["name"] or "",
+                specialty=r["specialty"] or "",
+                profile_url=r["profile_url"] or "",
+                github_url=r["github_url"] or "",
+                linkedin_url=r["linkedin_url"] or "",
+                email="",
+            )
+            for r in rows
+        ]
+
+    def get_participants_without_email(self, limit: int = 0) -> list[HackathonParticipant]:
+        """Return participants that have a profile_url but no email yet."""
+        sql = (
+            "SELECT * FROM participants "
+            "WHERE (email IS NULL OR email = '') AND (profile_url IS NOT NULL AND profile_url != '')"
+            " AND event_emitted_at IS NULL"
+            " ORDER BY first_seen_at ASC"
+        )
+        if limit > 0:
+            sql += f" LIMIT {limit}"
+        rows = self._conn.execute(sql).fetchall()
+        return [
+            HackathonParticipant(
+                hackathon_url=r["hackathon_url"],
+                hackathon_title=r["hackathon_title"] or "",
+                username=r["username"],
+                name=r["name"] or "",
+                specialty=r["specialty"] or "",
+                profile_url=r["profile_url"] or "",
+                github_url=r["github_url"] or "",
+                linkedin_url=r["linkedin_url"] or "",
+                email="",
             )
             for r in rows
         ]

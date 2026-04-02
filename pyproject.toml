@@ -1,6 +1,6 @@
 [project]
 name = "signalforge-cli"
-version = "0.4.2"
+version = "0.5.0"
 description = "CLI for extracting emails and sending customer.io events"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,9 @@ signalforge-participants = "devpost_scraper.cli:participants_main"
 signalforge-harvest = "devpost_scraper.cli:harvest_main"
 signalforge-github-forks = "devpost_scraper.cli:github_forks_main"
 signalforge-rb2b = "devpost_scraper.cli:rb2b_main"
+signalforge-auto = "devpost_scraper.cli:auto_main"
+signalforge-lookup = "devpost_scraper.cli:lookup_main"
+signalforge-gh-search = "devpost_scraper.cli:github_search_main"
 
 [build-system]
 requires = ["hatchling"]

@@ -89,7 +89,96 @@ async def emit_hackathon_events(participants: list[HackathonParticipant]) -> Non
     print(f"[cio] Emitted {sent}/{len(eligible)} events", file=sys.stderr)
 
 
+_GITHUB_FORK_EVENT = "github_fork"
 _VISITED_SITE_EVENT = "visited_site"
+
+
+async def emit_github_fork_events(
+    participants: list[HackathonParticipant],
+    owner: str,
+    repo: str,
+) -> None:
+    """Fire a ``github_fork`` event for each fork owner that has an email.
+
+    Separate from ``devpost_hackathon`` so Customer.io campaigns can use
+    fork-appropriate copy (e.g. "I noticed you forked {{event.repo}}…")
+    instead of hackathon copy.
+    """
+    eligible = [p for p in participants if p.email]
+    if not eligible:
+        print("[cio] No fork owners with emails — skipping event emission", file=sys.stderr)
+        return
+
+    svc = _build_service()
+    repo_slug = f"{owner}/{repo}"
+    repo_url = f"https://github.com/{repo_slug}"
+    sent = 0
+
+    for p in eligible:
+        name_parts = p.name.split(maxsplit=1)
+        first = name_parts[0] if name_parts else ""
+        last = name_parts[1] if len(name_parts) > 1 else ""
+
+        await svc.identify_user(p.email, email=p.email, first_name=first, last_name=last)
+
+        data = {
+            "repo_name": repo_slug,
+            "repo_url": repo_url,
+            "fork_url": f"{p.github_url}/{repo}",
+            "username": p.username,
+            "github_url": p.github_url,
+        }
+        ok = await svc.track_event(p.email, _GITHUB_FORK_EVENT, data)
+        if ok:
+            sent += 1
+            print(f"  [cio] {_GITHUB_FORK_EVENT} → {p.email}", file=sys.stderr)
+        else:
+            print(f"  [cio] FAILED {p.email}", file=sys.stderr)
+
+    print(f"[cio] Emitted {sent}/{len(eligible)} {_GITHUB_FORK_EVENT} events", file=sys.stderr)
+
+
+_GITHUB_SEARCH_EVENT = "github_search"
+
+
+async def emit_github_search_events(
+    participants: list[HackathonParticipant],
+    query: str,
+) -> None:
+    """Fire a ``github_search`` event for each repo owner that has an email.
+
+    Separate event name from fork events so Customer.io campaigns can use
+    search-appropriate copy (e.g. "I noticed your repo showed up when I searched for {{event.query}}…").
+    """
+    eligible = [p for p in participants if p.email]
+    if not eligible:
+        print("[cio] No repo owners with emails — skipping event emission", file=sys.stderr)
+        return
+
+    svc = _build_service()
+    sent = 0
+
+    for p in eligible:
+        name_parts = p.name.split(maxsplit=1)
+        first = name_parts[0] if name_parts else ""
+        last = name_parts[1] if len(name_parts) > 1 else ""
+
+        await svc.identify_user(p.email, email=p.email, first_name=first, last_name=last)
+
+        data = {
+            "query": query,
+            "username": p.username,
+            "github_url": p.github_url,
+            "repo_full_name": p.specialty,
+        }
+        ok = await svc.track_event(p.email, _GITHUB_SEARCH_EVENT, data)
+        if ok:
+            sent += 1
+            print(f"  [cio] {_GITHUB_SEARCH_EVENT} → {p.email}", file=sys.stderr)
+        else:
+            print(f"  [cio] FAILED {p.email}", file=sys.stderr)
+
+    print(f"[cio] Emitted {sent}/{len(eligible)} {_GITHUB_SEARCH_EVENT} events", file=sys.stderr)
 
 
 async def emit_visited_site_events(visitors: list[Rb2bVisitor]) -> int:

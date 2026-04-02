@@ -122,6 +122,82 @@ async def fetch_repo_forks(
     return collected
 
 
+_GITHUB_SEARCH_API = "https://api.github.com/search/repositories"
+
+
+async def search_github_repos(
+    query: str,
+    *,
+    max_results: int = 100,
+    sort: str = "stars",
+) -> list[dict[str, Any]]:
+    """Search GitHub repositories using the /search/repositories API.
+
+    Returns a list of dicts with keys:
+      full_name, owner_login, owner_html_url, owner_type,
+      description, stars, html_url, topics
+    """
+    collected: list[dict[str, Any]] = []
+    per_page = min(100, max_results)
+    page = 1
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        while len(collected) < max_results:
+            resp = await client.get(
+                _GITHUB_SEARCH_API,
+                params={
+                    "q": query,
+                    "sort": sort,
+                    "order": "desc",
+                    "per_page": per_page,
+                    "page": page,
+                },
+                headers=_github_headers(),
+            )
+            if resp.status_code == 403:
+                detail = (
+                    resp.json().get("message", resp.text)
+                    if resp.headers.get("content-type", "").startswith("application/json")
+                    else resp.text
+                )
+                raise RuntimeError(
+                    f"GitHub API 403: {detail}. "
+                    "Set GITHUB_TOKEN in .env for higher rate limits."
+                )
+            if resp.status_code == 422:
+                detail = resp.json().get("message", resp.text)
+                raise RuntimeError(f"GitHub search API 422: {detail}")
+            resp.raise_for_status()
+
+            data = resp.json()
+            items = data.get("items", [])
+            if not items:
+                break
+
+            for item in items:
+                owner = item.get("owner") or {}
+                collected.append(
+                    {
+                        "full_name": (item.get("full_name") or "").strip(),
+                        "owner_login": (owner.get("login") or "").strip(),
+                        "owner_html_url": (owner.get("html_url") or "").strip(),
+                        "owner_type": (owner.get("type") or "").strip(),
+                        "description": (item.get("description") or "").strip(),
+                        "stars": item.get("stargazers_count", 0),
+                        "html_url": (item.get("html_url") or "").strip(),
+                        "topics": ", ".join(item.get("topics") or []),
+                    }
+                )
+                if len(collected) >= max_results:
+                    return collected
+
+            if len(items) < per_page:
+                break
+            page += 1
+
+    return collected
+
+
 _JSON_HEADERS = {
     "Accept": "application/json, text/javascript, */*; q=0.01",
     "X-Requested-With": "XMLHttpRequest",
@@ -604,6 +680,95 @@ async def find_participant_email(profile_url: str) -> dict[str, Any]:
 
     result["email"] = all_emails[0] if all_emails else ""
     return result
+
+
+# ---------------------------------------------------------------------------
+# RB2B export fetcher
+# ---------------------------------------------------------------------------
+
+_RB2B_EXPORTS_URL = "https://app.rb2b.com/profiles/exports"
+_RB2B_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+async def fetch_rb2b_exports(
+    session_cookie: str,
+    uid_cookie: str,
+) -> list[dict[str, Any]]:
+    """
+    Fetch https://app.rb2b.com/profiles/exports and return a list of export entries.
+
+    Each entry: {filename, url, row_count, date_label, date (YYYY-MM-DD)}
+
+    Requires both cookies:
+      - _rb2b_session  (Rails session — copy from browser DevTools)
+      - _reb2buid      (device/account UID — copy from browser DevTools)
+    """
+    cookie_header = f"_rb2b_session={session_cookie}; _reb2buid={uid_cookie}"
+    headers = {
+        "Cookie": cookie_header,
+        "Accept": "text/html,application/xhtml+xml",
+        "User-Agent": _RB2B_USER_AGENT,
+        "Referer": "https://app.rb2b.com/",
+    }
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        resp = await client.get(_RB2B_EXPORTS_URL, headers=headers)
+
+    if resp.status_code == 302 or "Login with a Magic Link" in resp.text:
+        raise PermissionError(
+            "RB2B session is invalid or expired. "
+            "Copy fresh _rb2b_session and _reb2buid cookie values from your browser "
+            "DevTools → Application → Cookies → app.rb2b.com "
+            "and update RB2B_SESSION / REB2B_UID in .env"
+        )
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    exports: list[dict[str, Any]] = []
+    for row in soup.select("table tr"):
+        cells = row.find_all("td")
+        if len(cells) < 3:
+            continue
+        link_tag = cells[0].find("a", href=True)
+        if not link_tag:
+            continue
+        filename = link_tag.get_text(strip=True)
+        url = link_tag["href"]
+        row_count_text = cells[1].get_text(strip=True)
+        date_text = cells[2].get_text(strip=True)  # e.g. "03/31/2026 08:20:27 PM EDT"
+
+        row_count = int(row_count_text) if row_count_text.isdigit() else 0
+
+        # Parse date portion (MM/DD/YYYY) → YYYY-MM-DD
+        date_iso = ""
+        date_match = re.match(r"(\d{2})/(\d{2})/(\d{4})", date_text)
+        if date_match:
+            mm, dd, yyyy = date_match.groups()
+            date_iso = f"{yyyy}-{mm}-{dd}"
+
+        exports.append(
+            {
+                "filename": filename,
+                "url": url,
+                "row_count": row_count,
+                "date_label": date_text,
+                "date": date_iso,
+            }
+        )
+
+    return exports
+
+
+async def download_rb2b_export(url: str, dest_path: str) -> None:
+    """Download a pre-signed S3 URL to dest_path."""
+    import pathlib
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        resp = await client.get(url)
+    resp.raise_for_status()
+    pathlib.Path(dest_path).write_bytes(resp.content)
 
 
 async def find_author_email(project_url: str) -> dict[str, Any]:
