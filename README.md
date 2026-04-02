@@ -9,7 +9,7 @@
 
 > **Mine developer signals. Enrich with emails. Fire into your CRM.**
 
-🟣 [PyPI v0.6.0](https://pypi.org/project/signalforge-cli/0.6.0/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
+🟣 [PyPI v0.7.0](https://pypi.org/project/signalforge-cli/0.7.0/) &nbsp;|&nbsp; 🐍 Python 3.11+ &nbsp;|&nbsp; 📄 MIT &nbsp;|&nbsp; ⚡ [Built on Backboard.io](https://backboard.io) &nbsp;|&nbsp; 📬 [Customer.io](https://customer.io) &nbsp;|&nbsp; 🏆 [Devpost](https://devpost.com)
 
 SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports — enriches every lead with real emails — then fires them straight into Customer.io. One command. Hundreds of warm leads.
 
@@ -31,6 +31,7 @@ SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports �
 | `signalforge-auto-batch` | **One cron command**: daily scrape + emit batch in a single run |
 | `signalforge-lookup` | Search the DB by email, name, or username — show full lead context |
 | `signalforge-assistant` | Interactive AI analyst REPL over your lead database |
+| `signalforge-campaigns` | Sync email HTML files with Customer.io campaign actions via the App API |
 
 ---
 
@@ -103,8 +104,9 @@ Copy `.env.example` → `.env`:
 | `DEVPOST_ASSISTANT_ID` | auto | Saved on first run, reused after |
 | `DEVPOST_SESSION` | `signalforge-participants`, `signalforge-harvest` | `_devpost` cookie from browser DevTools |
 | `GITHUB_TOKEN` | optional | PAT for 5 000 req/hr vs 60. Zero scopes needed |
-| `CUSTOMERIO_SITE_ID` | `--emit-events` | Customer.io Track API |
-| `CUSTOMERIO_API_KEY` | `--emit-events` | Customer.io Track API |
+| `CUSTOMERIO_SITE_ID` | `--emit-events` | Customer.io Track API (event emission) |
+| `CUSTOMERIO_API_KEY` | `--emit-events` | Customer.io Track API (event emission) |
+| `CUSTOMERIO_APP_API_KEY` | `signalforge-campaigns` | Customer.io App API (campaign management) |
 
 ---
 
@@ -199,7 +201,7 @@ Event name depends on how old the hackathon is:
 
 Email = Customer.io user ID. Payload: `hackathon_url`, `hackathon_title`, `username`, `name`, `specialty`, `profile_url`, `github_url`, `linkedin_url`.
 
-Email templates in `emails/` use `{{customer.first_name}}` and `{{event.*}}` Liquid variables.
+Email templates: `emails/devpost-hackathon/` (variants a–l) for `devpost_hackathon`, `emails/closed-hackathon/` (variants a–f, MLH free-tier campaign) for `closed_hackathon`. All use `{{customer.first_name}}` and `{{event.*}}` Liquid variables. Push changes to cx.io with `signalforge-campaigns update-all`.
 
 ---
 
@@ -420,6 +422,91 @@ signalforge-assistant --db my_harvest.db
 | `--db PATH` | `devpost_harvest.db` | SQLite path |
 
 Requires `BACKBOARD_API_KEY`. Model defaults to `gpt-4o-mini`; override with `BACKBOARD_MODEL` and `BACKBOARD_LLM_PROVIDER`.
+
+---
+
+### `signalforge-campaigns` — Customer.io campaign management
+
+Sync HTML email files with Customer.io campaign actions via the App API. Eliminates copy-pasting: edit locally, push with one command.
+
+**Email templates** live in `emails/` organised by campaign:
+
+```
+emails/
+├── manifest.json                  ← global action ↔ file registry
+├── campaigns/                     ← per-campaign fetched manifests
+│   └── {campaign_id}.json
+├── devpost-hackathon/             ← variants for the devpost_hackathon event
+│   ├── variant-a.html … variant-l.html
+├── closed-hackathon/              ← variants for the closed_hackathon event (MLH free tier)
+│   ├── variant-a.html … variant-f.html
+└── github-forkers/                ← variants for the github_fork event
+    └── variant-a.html … variant-h.html
+```
+
+Every HTML file has a `<!-- Subject: ... -->` comment at line 1 — that becomes the email subject on push. Liquid variables `{{customer.first_name}}` and `{{event.*}}` are used throughout.
+
+**Typical workflow:**
+
+```bash
+# 1. See all campaigns
+signalforge-campaigns list-campaigns
+
+# 2. Pull a campaign + all its actions into emails/campaigns/{id}.json
+signalforge-campaigns get-campaign --campaign-id 9
+
+# 3. Visualise the action graph as a Mermaid flowchart
+signalforge-campaigns show-campaign --campaign-id 9
+
+# 4. Auto-pair all email actions to a folder of HTML files (checks counts match)
+signalforge-campaigns get-actions --campaign-id 9 --folder emails/closed-hackathon
+
+# 5. Push all files for a campaign at once
+signalforge-campaigns update-all --campaign-id 9
+
+# One-off: register or push a single action
+signalforge-campaigns get    --campaign-id 9 --action-id 353 --file emails/closed-hackathon/variant-c.html
+signalforge-campaigns update --file emails/closed-hackathon/variant-c.html
+```
+
+**Subcommands**
+
+| Subcommand | Description |
+|---|---|
+| `list-campaigns` | List all campaigns — id, state, name |
+| `get-campaign` | Fetch a campaign + all its actions → `emails/campaigns/{id}.json` |
+| `show-campaign` | Print a Mermaid flowchart of the campaign's action graph |
+| `get-actions` | Fetch all email actions, pair with a local folder, upsert `manifest.json` |
+| `update-all` | Push every manifest-linked HTML file for a campaign to cx.io |
+| `get` | Fetch one action and upsert it into `manifest.json` |
+| `update` | Push one local HTML file's subject + body to cx.io |
+
+**`get-actions` count validation**
+
+Before writing anything, `get-actions` compares the number of email-type actions in the campaign (A/B test container nodes are automatically excluded) against the number of HTML files in the folder. If they don't match, it prints both lists and exits — nothing is written.
+
+```bash
+# Skip the confirmation prompt for scripting / CI
+signalforge-campaigns get-actions --campaign-id 9 --folder emails/closed-hackathon --yes
+```
+
+**`manifest.json` schema**
+
+```json
+[
+  {
+    "file":            "emails/closed-hackathon/variant-c.html",
+    "campaign_id":     "9",
+    "action_id":       "353",
+    "name":            "Email 1",
+    "subject":         "Late to your inbox, but this is worth it",
+    "last_fetched_at": "2026-04-02T18:51:27+00:00",
+    "last_pushed_at":  "2026-04-02T18:51:51+00:00"
+  }
+]
+```
+
+Commit `manifest.json` alongside the HTML files so the team can always see which version is live in cx.io and when it was last pushed.
 
 ---
 
