@@ -59,7 +59,6 @@ cat <<'BANNER'
        ___/ / / /_/ / / / / /_/ / / __/ / /_/ / /  / /_/ /  __/
       /____/_/\__, /_/ /_/\__,_/_/_/    \____/_/   \__, /\___/
              /____/                               /____/
-
 BANNER
 # Read version straight from pyproject.toml — no Python needed, no install required.
 SCRIPT_DIR_BANNER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -80,11 +79,11 @@ SELECT 'total_h='    || COUNT(*)                                                
 SELECT 'scraped_h='  || COUNT(*)                                                                                      FROM hackathons WHERE last_scraped_at IS NOT NULL;
 SELECT 'last_h='     || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_scraped_at),1,19),'T',' '), 'localtime'),'never')  FROM hackathons;
 
-SELECT 'total_p='    || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%';
-SELECT 'w_email_p='  || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND email != '';
-SELECT 'emitted_p='  || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND event_emitted_at IS NOT NULL;
-SELECT 'unsent_p='   || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND email != '' AND event_emitted_at IS NULL;
-SELECT 'last_p='     || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_seen_at),1,19),'T',' '), 'localtime'),'never')  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%';
+SELECT 'total_p='    || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND hackathon_url NOT LIKE 'github:search:%';
+SELECT 'w_email_p='  || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND hackathon_url NOT LIKE 'github:search:%' AND email != '';
+SELECT 'emitted_p='  || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND hackathon_url NOT LIKE 'github:search:%' AND event_emitted_at IS NOT NULL;
+SELECT 'unsent_p='   || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND hackathon_url NOT LIKE 'github:search:%' AND email != '' AND event_emitted_at IS NULL;
+SELECT 'last_p='     || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_seen_at),1,19),'T',' '), 'localtime'),'never')  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND hackathon_url NOT LIKE 'github:search:%';
 
 SELECT 'p_leads='    || COUNT(*)  FROM participants WHERE email != '';
 SELECT 'p_unsent='   || COUNT(*)  FROM participants WHERE email != '' AND event_emitted_at IS NULL;
@@ -126,6 +125,17 @@ fork_data=$(_sqlite -separator '|' \
    WHERE hackathon_url LIKE 'github:forks:%'
    GROUP BY hackathon_url;" 2>/dev/null) || true
 
+# ── Search aggregate query ─────────────────────────────────────────────────────
+search_data=$(_sqlite -separator '|' \
+  "SELECT hackathon_url,
+          COUNT(*),
+          SUM(CASE WHEN email != '' THEN 1 ELSE 0 END),
+          SUM(CASE WHEN email != '' AND event_emitted_at IS NULL THEN 1 ELSE 0 END),
+          COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_seen_at),1,19),'T',' '), 'localtime'),'never')
+   FROM participants
+   WHERE hackathon_url LIKE 'github:search:%'
+   GROUP BY hackathon_url;" 2>/dev/null) || true
+
 # ── Render: Devpost hackathons ────────────────────────────────────────────────
 header "🏆  Devpost — Hackathons"
 printf "    %-32s %-9s %-9s %-9s %-11s \n"    "Scraped" "Total" "Emails" "Outbox"  "Last Updated"
@@ -141,14 +151,33 @@ else
   total_f_final=0
   w_email_f_final=0
   unsent_f_final=0
-  printf "    %-32s %-9s %-9s %-9s  %-16s\n" "Repo" "Total" "Emails" "Outbox" "Last scraped"
+  printf "    %-32s %-9s %-9s %-9s %-16s\n" "Repo" "Total" "Emails" "Outbox" "Last scraped"
   while IFS='|' read -r src total_f w_email_f unsent_f last_f; do
-    printf "     %-31s %-9s %-9s %-9s  %-16s\n" "${src#github:forks:}" "$(comma $total_f)" "$(comma $w_email_f)" "$(comma $unsent_f)" "$last_f"
+    printf "     %-31s %-9s %-9s %-9s %-16s\n" "${src#github:forks:}" "$(comma $total_f)" "$(comma $w_email_f)" "$(comma $unsent_f)" "$last_f"
     total_f_final=$((total_f_final + total_f))
     w_email_f_final=$((w_email_f_final + w_email_f))
     unsent_f_final=$((unsent_f_final + unsent_f))
   done <<< "$fork_data"
   printf "    %-32s %-9s %-9s %-9s\n" "Total:" "$(comma $total_f_final)" "$(comma $w_email_f_final)" "$(comma $unsent_f_final)"
+fi
+
+# ── Render: GitHub search ─────────────────────────────────────────────────────
+header "🔍  GitHub Search"
+
+if [[ -z "$search_data" ]]; then
+  echo "    No GitHub search data yet."
+else
+  total_s_final=0
+  w_email_s_final=0
+  unsent_s_final=0
+  printf "    %-32s %-9s %-9s %-9s %-16s\n" "Query" "Total" "Emails" "Outbox" "Last scraped"
+  while IFS='|' read -r src total_s w_email_s unsent_s last_s; do
+    printf "     %-31s %-9s %-9s %-9s %-16s\n" "${src#github:search:}" "$(comma $total_s)" "$(comma $w_email_s)" "$(comma $unsent_s)" "$last_s"
+    total_s_final=$((total_s_final + total_s))
+    w_email_s_final=$((w_email_s_final + w_email_s))
+    unsent_s_final=$((unsent_s_final + unsent_s))
+  done <<< "$search_data"
+  printf "    %-32s %-9s %-9s %-9s\n" "Total:" "$(comma $total_s_final)" "$(comma $w_email_s_final)" "$(comma $unsent_s_final)"
 fi
 
 # ── Render: RB2B visitors ─────────────────────────────────────────────────────
@@ -241,7 +270,7 @@ else:
         results = list(ex.map(fetch_metrics, ids))
     metrics = dict(zip(ids, results))
 
-    fmt = "    {:<29}  {:>8}  {:>8}  {:>7}  {:>14}  {:>6}"
+    fmt = "    {:<29}  {:>8}  {:>8}  {:>7}  {:>11}  {:>6}"
     print(fmt.format("Campaign", "Sent", "Deliv", "Click", "Convert", "Unsubs"))
     for c in campaigns[:10]:
         name = c.get("name", "—")[:27]
@@ -259,6 +288,5 @@ else:
 PYEOF
   fi
 fi
-  printf "\n"
 
-uv run signalforge |tail -12
+uv run signalforge |tail -18

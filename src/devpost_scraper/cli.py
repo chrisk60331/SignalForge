@@ -50,28 +50,18 @@ _LANDING_BANNER = r"""
 _LANDING_MENU = """\
 Command Menu:
 
-  ── Scraping ────────────────────────────────────────────────────────────────
   [1]  signalforge-devpost-search  → Search Devpost projects + enrich + export CSV
   [2]  signalforge-participants    → Scrape one hackathon's participants + export CSV
   [3]  signalforge-harvest         → Walk hackathons → scrape → SQLite → emit events
   [4]  signalforge-github-forks    → Mine GitHub fork owners + optional email enrichment
   [5]  signalforge-gh-search       → Search GitHub repos by keyword + mine owner emails
   [6]  signalforge-rb2b            → Import RB2B visitor CSVs + emit visited_site events
-
-  ── Automation ──────────────────────────────────────────────────────────────
   [7]  signalforge-auto            → Full daily scrape: RB2B + Harvest + all Forks (no emit)
   [8]  signalforge-auto-batch      → Daily scrape + emit batch in one cron command
-
-  ── Event Emission ──────────────────────────────────────────────────────────
   [9]  signalforge-emit-all        → Flush all unsent events across every source at once
   [10] signalforge-emit-batch      → Emit up to --batch-size events per source (cron-friendly)
-
-  ── Campaign Management ─────────────────────────────────────────────────────
   [11] signalforge-campaigns       → Sync email HTML with Customer.io campaign actions
-                                     Subcommands: list-campaigns · get-campaign · show-campaign
-                                                  get-actions · update-all · get · update
-
-  ── Utilities ───────────────────────────────────────────────────────────────
+   Subcommands: list-campaigns · get-campaign · show-campaign get-actions · update-all · get · update
   [12] signalforge-lookup          → Search the DB by email, name, or username
   [13] signalforge-assistant       → Interactive AI analyst: query DB, export CSV, insights
 """
@@ -1351,12 +1341,13 @@ def emit_all_main() -> None:
 
 
 async def _run_emit_batch(db_path: str, batch_size: int) -> None:
-    """Emit up to ``batch_size`` events from each of the four source buckets:
+    """Emit up to ``batch_size`` events from each source bucket:
 
     1. Devpost open / recently-closed  → ``devpost_hackathon``
     2. Devpost old-closed (>30 days)   → ``closed_hackathon``
     3. GitHub fork owners              → ``github_fork``
-    4. RB2B identified visitors        → ``visited_site``
+    4. GitHub search repo owners       → ``github_search``
+    5. RB2B identified visitors        → ``visited_site``
     """
     from collections import defaultdict
 
@@ -1434,7 +1425,27 @@ async def _run_emit_batch(db_path: str, batch_size: int) -> None:
     else:
         print("[emit-batch] github_fork: nothing to send.", file=sys.stderr)
 
-    # ── 4: RB2B visitors ──────────────────────────────────────────────────────
+    # ── 4: GitHub search repo owners ──────────────────────────────────────────
+    search_unsent = db.all_unemitted_search_participants()
+    if search_unsent:
+        batch_search = search_unsent[:batch_size]
+        print(
+            f"[emit-batch] github_search: {len(batch_search)}/{len(search_unsent)} queued…",
+            file=sys.stderr,
+        )
+        by_query: dict[str, list] = defaultdict(list)
+        for p in batch_search:
+            by_query[p.hackathon_url].append(p)
+        for src, group in by_query.items():
+            original_query = group[0].hackathon_title.removeprefix("GitHub search: ")
+            await emit_github_search_events(group, original_query)
+            for p in group:
+                db.mark_event_emitted(p.hackathon_url, p.username)
+        grand_total += len(batch_search)
+    else:
+        print("[emit-batch] github_search: nothing to send.", file=sys.stderr)
+
+    # ── 5: RB2B visitors ──────────────────────────────────────────────────────
     rb2b_unsent = db.get_unemitted_rb2b_visitors()
     if rb2b_unsent:
         batch_rb2b = rb2b_unsent[:batch_size]
@@ -2110,10 +2121,41 @@ async def _run_auto(
                 force_email=False,
             )
 
+    # ── 4. GitHub search — delta email scrape for every tracked query ─────────
+    import sqlite3 as _sqlite3b
+    con = _sqlite3b.connect(db_path)
+    search_rows = con.execute(
+        "SELECT DISTINCT hackathon_url, hackathon_title FROM participants "
+        "WHERE hackathon_url LIKE 'github:search:%'"
+    ).fetchall()
+    con.close()
+
+    if not search_rows:
+        print(
+            "[auto] No GitHub search queries tracked yet. "
+            "Add one with: signalforge-gh-search 'your query'",
+            file=sys.stderr,
+        )
+    else:
+        for i, (hackathon_url, hackathon_title) in enumerate(search_rows, start=1):
+            original_query = (hackathon_title or "").removeprefix("GitHub search: ") \
+                or hackathon_url.removeprefix("github:search:")
+            _auto_step(f"4.{i}", f"GitHub search — '{original_query}'")
+            await _run_github_search(
+                original_query,
+                max_results=100,
+                sort="stars",
+                db_path=db_path,
+                no_email=no_email,
+                emit_events=False,
+                force_email=False,
+            )
+
     print(
         "\n[auto] All done. Run emit-unsent on each source to flush the queue:\n"
         "  signalforge-harvest --emit-unsent\n"
         "  signalforge-github-forks --emit-unsent\n"
+        "  signalforge-gh-search --emit-unsent\n"
         "  signalforge-rb2b --emit-unsent",
         file=sys.stderr,
     )
@@ -2128,7 +2170,8 @@ def auto_main() -> None:
             "Full automated daily scrape — no events emitted:\n"
             "  1. RB2B: fetch today's visitor export\n"
             "  2. Harvest: walk open Devpost hackathons\n"
-            "  3. Forks: refresh every GitHub repo already in the DB\n\n"
+            "  3. Forks: refresh every GitHub repo already in the DB\n"
+            "  4. Search: delta-scrape every GitHub search query already in the DB\n\n"
             "After this completes, run --emit-unsent on each source to fire Customer.io events."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

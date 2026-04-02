@@ -1,6 +1,6 @@
 [project]
 name = "signalforge-cli"
-version = "0.7.1"
+version = "0.7.2"
 description = "CLI for extracting emails and sending customer.io events"
 readme = "README.md"
 requires-python = ">=3.11"
