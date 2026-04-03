@@ -256,6 +256,45 @@ async def emit_github_search_events(
     print(f"[cio] Emitted {sent}/{len(eligible)} {_GITHUB_SEARCH_EVENT} events", file=sys.stderr)
 
 
+_DEVTO_CHALLENGE_EVENT = "devto_challenge"
+
+
+async def emit_devto_events(participants: list[HackathonParticipant]) -> None:
+    """Emit ``devto_challenge`` Customer.io events for dev.to challenge submitters."""
+    eligible = [p for p in participants if p.email]
+    if not eligible:
+        print("[cio] No dev.to submitters with emails — skipping event emission", file=sys.stderr)
+        return
+
+    svc = _build_service()
+    sent = 0
+
+    for p in eligible:
+        name_parts = p.name.split(maxsplit=1)
+        first = name_parts[0] if name_parts else ""
+        last = name_parts[1] if len(name_parts) > 1 else ""
+
+        await svc.identify_user(p.email, email=p.email, first_name=first, last_name=last)
+
+        data = {
+            "challenge_url": p.hackathon_url.removeprefix("devto:challenge:"),
+            "challenge_title": p.hackathon_title,
+            "username": p.username,
+            "name": p.name,
+            "profile_url": p.profile_url,
+            "github_url": p.github_url,
+            "article_url": p.specialty,
+        }
+        ok = await svc.track_event(p.email, _DEVTO_CHALLENGE_EVENT, data)
+        if ok:
+            sent += 1
+            print(f"  [cio] {_DEVTO_CHALLENGE_EVENT} → {p.email}", file=sys.stderr)
+        else:
+            print(f"  [cio] FAILED {p.email}", file=sys.stderr)
+
+    print(f"[cio] Emitted {sent}/{len(eligible)} {_DEVTO_CHALLENGE_EVENT} events", file=sys.stderr)
+
+
 async def emit_visited_site_events(visitors: list[Rb2bVisitor]) -> int:
     """Identify + fire visited_site for each RB2B visitor that has an email.
 

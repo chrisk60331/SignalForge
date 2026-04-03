@@ -1,6 +1,6 @@
 [project]
 name = "signalforge-cli"
-version = "0.7.4"
+version = "0.8.0"
 description = "CLI for extracting emails and sending customer.io events"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,6 +28,7 @@ signalforge-emit-batch = "devpost_scraper.cli:emit_batch_main"
 signalforge-auto-batch = "devpost_scraper.cli:auto_batch_main"
 signalforge-assistant = "devpost_scraper.cli:assistant_main"
 signalforge-campaigns = "devpost_scraper.cli:campaigns_main"
+signalforge-devto = "devpost_scraper.cli:devto_harvest_main"
 
 [build-system]
 requires = [

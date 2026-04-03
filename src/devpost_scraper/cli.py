@@ -20,7 +20,7 @@ from devpost_scraper.backboard_client import (
     ensure_assistant,
     run_in_thread,
 )
-from devpost_scraper.customerio import emit_github_fork_events, emit_github_search_events, emit_hackathon_events, emit_visited_site_events, select_event_name
+from devpost_scraper.customerio import emit_devto_events, emit_github_fork_events, emit_github_search_events, emit_hackathon_events, emit_visited_site_events, select_event_name
 from devpost_scraper.csv_export import write_projects
 from devpost_scraper.models import DevpostProject, Hackathon, HackathonParticipant, Rb2bVisitor
 from devpost_scraper.scraper import (
@@ -29,9 +29,12 @@ from devpost_scraper.scraper import (
     fetch_repo_forks,
     find_author_email,
     find_participant_email,
+    get_devto_challenge_tag,
+    get_devto_tag_articles,
     get_github_email,
     get_hackathon_participants,
     get_project_details,
+    list_devto_challenges,
     list_hackathons,
     search_github_repos,
     search_projects,
@@ -64,6 +67,7 @@ Command Menu:
    Subcommands: list-campaigns · get-campaign · show-campaign get-actions · update-all · get · update
   [12] signalforge-lookup          → Search the DB by email, name, or username
   [13] signalforge-assistant       → Interactive AI analyst: query DB, export CSV, insights
+  [14] signalforge-devto           → Walk dev.to challenges → scrape submitters → SQLite → emit events
 """
 
 # ─── ANSI terminal helpers ──────────────────────────────────────────────────
@@ -288,6 +292,9 @@ if __name__ == "__main__":
 
 
 _PARTICIPANTS_JWT_KEY = "DEVPOST_SESSION"
+_DEVTO_SESSION_KEY = "DEV_TO__DEVTO_FOREM_SESSION"
+_DEVTO_REMEMBER_KEY = "DEV_TO_REMEMBER_USER_TOKEN"
+_DEVTO_CURRENT_USER_KEY = "DEV_TO_CURRENT_USER"
 
 
 async def _run_participants(
@@ -1308,7 +1315,18 @@ async def _run_emit_all(db_path: str) -> None:
     else:
         print("[emit-all] GitHub search: nothing to send.", file=sys.stderr)
 
-    # ── 4. RB2B visitors ───────────────────────────────────────────────────────
+    # ── 4. dev.to challenge submitters ────────────────────────────────────────
+    devto_unsent = db.all_unemitted_devto_participants()
+    if devto_unsent:
+        print(f"[emit-all] {len(devto_unsent)} dev.to submitters…", file=sys.stderr)
+        await emit_devto_events(devto_unsent)
+        for p in devto_unsent:
+            db.mark_event_emitted(p.hackathon_url, p.username)
+        grand_total += len(devto_unsent)
+    else:
+        print("[emit-all] dev.to: nothing to send.", file=sys.stderr)
+
+    # ── 5. RB2B visitors ───────────────────────────────────────────────────────
     rb2b_unsent = db.get_unemitted_rb2b_visitors()
     if rb2b_unsent:
         print(f"[emit-all] {len(rb2b_unsent)} RB2B visitors…", file=sys.stderr)
@@ -1347,7 +1365,8 @@ async def _run_emit_batch(db_path: str, batch_size: int) -> None:
     2. Devpost old-closed (>30 days)   → ``closed_hackathon``
     3. GitHub fork owners              → ``github_fork``
     4. GitHub search repo owners       → ``github_search``
-    5. RB2B identified visitors        → ``visited_site``
+    5. dev.to challenge submitters     → ``devto_challenge``
+    6. RB2B identified visitors        → ``visited_site``
     """
     from collections import defaultdict
 
@@ -1445,7 +1464,22 @@ async def _run_emit_batch(db_path: str, batch_size: int) -> None:
     else:
         print("[emit-batch] github_search: nothing to send.", file=sys.stderr)
 
-    # ── 5: RB2B visitors ──────────────────────────────────────────────────────
+    # ── 5: dev.to challenge submitters ────────────────────────────────────────
+    devto_unsent = db.all_unemitted_devto_participants()
+    if devto_unsent:
+        batch_devto = devto_unsent[:batch_size]
+        print(
+            f"[emit-batch] devto_challenge: {len(batch_devto)}/{len(devto_unsent)} queued…",
+            file=sys.stderr,
+        )
+        await emit_devto_events(batch_devto)
+        for p in batch_devto:
+            db.mark_event_emitted(p.hackathon_url, p.username)
+        grand_total += len(batch_devto)
+    else:
+        print("[emit-batch] devto_challenge: nothing to send.", file=sys.stderr)
+
+    # ── 6: RB2B visitors ──────────────────────────────────────────────────────
     rb2b_unsent = db.get_unemitted_rb2b_visitors()
     if rb2b_unsent:
         batch_rb2b = rb2b_unsent[:batch_size]
@@ -1597,6 +1631,292 @@ def _run_export_linkedin_no_email(db_path: str, output: str | None) -> None:
     print(
         f"[export-linkedin] {len(rows)} participants exported → {dest}",
         file=_sys.stderr,
+    )
+
+
+# ---------------------------------------------------------------------------
+# signalforge-devto: walk dev.to challenges, scrape submitters, enrich emails
+# ---------------------------------------------------------------------------
+
+async def _run_devto_harvest(
+    db_path: str,
+    session: str,
+    remember_token: str,
+    current_user: str,
+    no_email: bool,
+    emit_events: bool,
+    rescrape: bool,
+    max_submissions: int = 0,
+    states: list[str] | None = None,
+) -> None:
+    from devpost_scraper.db import HarvestDB
+
+    db = HarvestDB(db_path)
+
+    # Phase 1: discover challenges
+    print("[devto] Fetching challenge list from dev.to/challenges…", file=sys.stderr)
+    try:
+        raw_challenges = await list_devto_challenges(session, remember_token, current_user)
+    except Exception as exc:
+        raise SystemExit(f"[error] Failed to fetch dev.to challenges: {exc}") from exc
+
+    if not raw_challenges:
+        print("[devto] No challenges found. Check cookies.", file=sys.stderr)
+        db.close()
+        return
+
+    # Filter by state
+    wanted_states = set(states) if states else {"active", "previous"}
+    challenges = [c for c in raw_challenges if c["state"] in wanted_states]
+    print(f"[devto] Found {len(raw_challenges)} total challenges, {len(challenges)} match states {wanted_states}", file=sys.stderr)
+
+    total_new = 0
+    total_emitted = 0
+
+    for challenge in challenges:
+        challenge_url: str = challenge["url"]
+        challenge_state: str = challenge["state"]
+
+        # Phase 2: get submission tag from challenge detail page
+        print(f"\n[devto] {challenge['title']} ({challenge_url})", file=sys.stderr)
+        try:
+            detail = await get_devto_challenge_tag(challenge_url, session, remember_token, current_user)
+        except Exception as exc:
+            print(f"  [warn] Failed to fetch challenge detail: {exc}", file=sys.stderr)
+            continue
+
+        tag = detail.get("tag", "")
+        title = detail.get("title", "") or challenge["title"]
+
+        if not tag:
+            print(f"  [skip] No submission tag found for {challenge_url}", file=sys.stderr)
+            continue
+
+        print(f"  tag: #{tag}", file=sys.stderr)
+        db.upsert_devto_challenge(tag, title, challenge_url, challenge_state)
+
+        # Check if already scraped
+        already_scraped = db.devto_challenge_scraped(tag)
+        if already_scraped and challenge_state == "previous":
+            print(f"  [skip] Previous challenge, already scraped.", file=sys.stderr)
+            if not rescrape:
+                continue
+        elif already_scraped and not rescrape:
+            print(f"  [cached] Already scraped — use --rescrape to force.", file=sys.stderr)
+            continue
+
+        # Phase 3: paginate through /api/articles?tag={tag}
+        hackathon_url_key = f"devto:challenge:{tag}"
+        participants: list[HackathonParticipant] = []
+        page = 1
+        seen_usernames: set[str] = set()
+
+        while True:
+            try:
+                articles = await get_devto_tag_articles(tag, page=page)
+            except Exception as exc:
+                print(f"  [warn] API error on page {page}: {exc}", file=sys.stderr)
+                break
+
+            if not articles:
+                break
+
+            print(f"  [scan] page {page}: {len(articles)} articles ({len(participants) + len(articles)} so far)…", file=sys.stderr)
+
+            for art in articles:
+                user = art.get("user") or {}
+                username: str = (user.get("username") or "").strip()
+                if not username or username in seen_usernames:
+                    continue
+                seen_usernames.add(username)
+
+                name: str = (user.get("name") or username).strip()
+                github_username: str = (user.get("github_username") or "").strip()
+                github_url = f"https://github.com/{github_username}" if github_username else ""
+                article_url: str = (art.get("url") or "").strip()
+
+                participants.append(
+                    HackathonParticipant(
+                        hackathon_url=hackathon_url_key,
+                        hackathon_title=title,
+                        username=username,
+                        name=name,
+                        profile_url=f"https://dev.to/{username}",
+                        github_url=github_url,
+                        specialty=article_url,
+                    )
+                )
+
+                if max_submissions and len(participants) >= max_submissions:
+                    break
+
+            if len(articles) < 30 or (max_submissions and len(participants) >= max_submissions):
+                break
+            page += 1
+
+        if not participants:
+            db.mark_devto_challenge_scraped(tag)
+            continue
+
+        print(f"  [scan] {len(participants)} unique submitters across {page} pages", file=sys.stderr)
+
+        # Phase 4: upsert → detect delta
+        new_participants = db.upsert_participants(participants)
+        total_new += len(new_participants)
+        print(f"  [db] {len(new_participants)} new, {len(participants) - len(new_participants)} existing", file=sys.stderr)
+
+        # Phase 5: email-enrich only the delta
+        if new_participants and not no_email:
+            print(f"  [enrich] enriching {len(new_participants)} new submitters…", file=sys.stderr)
+            total_targets = sum(1 for p in new_participants if p.github_url)
+            processed = 0
+            for p in new_participants:
+                if not p.github_url:
+                    continue
+                processed += 1
+                try:
+                    email = await get_github_email(p.github_url)
+                    p.email = email
+                    if email:
+                        print(
+                            f"    [email {processed}/{total_targets}] {email} ← {p.username}",
+                            file=sys.stderr,
+                        )
+                    else:
+                        print(
+                            f"    [email {processed}/{total_targets}] (none) ← {p.username}",
+                            file=sys.stderr,
+                        )
+                    db.update_participant_enrichment(p)
+                except Exception as exc:
+                    print(f"    [warn] enrich failed for {p.username}: {exc}", file=sys.stderr)
+
+        # Phase 6: emit events
+        if emit_events:
+            unemitted = db.get_unemitted_participants(hackathon_url_key)
+            if unemitted:
+                print(f"  [cio] Emitting events for {len(unemitted)} unemitted submitters…", file=sys.stderr)
+                await emit_devto_events(unemitted)
+                for p in unemitted:
+                    db.mark_event_emitted(hackathon_url_key, p.username)
+                total_emitted += len(unemitted)
+
+        db.mark_devto_challenge_scraped(tag)
+
+    stats = db.stats()
+    print(f"\n{'=' * 60}", file=sys.stderr)
+    print(f"[devto] Done.", file=sys.stderr)
+    print(f"  participants in db: {stats['participants']}", file=sys.stderr)
+    print(f"  with email: {stats['with_email']}", file=sys.stderr)
+    print(f"  new this run: {total_new}", file=sys.stderr)
+    if total_emitted:
+        print(f"  events emitted (this run): {total_emitted}", file=sys.stderr)
+    print(f"  db: {db_path}", file=sys.stderr)
+    db.close()
+
+
+def devto_harvest_main() -> None:
+    load_dotenv(_ENV_FILE, override=True)
+    if len(sys.argv) == 1:
+        _print_landing()
+        print("Tip: run `signalforge-devto --help` for full usage.")
+        return
+
+    parser = argparse.ArgumentParser(
+        prog="signalforge-devto",
+        description=(
+            "Walk dev.to challenge listings, scrape all submitters, enrich with emails "
+            "via GitHub API, store in SQLite, and emit Customer.io events."
+        ),
+    )
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default="devpost_harvest.db",
+        help="SQLite database path (default: devpost_harvest.db)",
+    )
+    parser.add_argument(
+        "--no-email",
+        action="store_true",
+        default=False,
+        help="Skip email enrichment (much faster)",
+    )
+    parser.add_argument(
+        "--emit-events",
+        action="store_true",
+        default=False,
+        help="Emit Customer.io devto_challenge events for new submitters",
+    )
+    parser.add_argument(
+        "--emit-unsent",
+        action="store_true",
+        default=False,
+        help="Skip scraping — emit events for all unsent dev.to participants in the DB",
+    )
+    parser.add_argument(
+        "--rescrape",
+        action="store_true",
+        default=False,
+        help="Re-scrape challenges that were already scraped in a previous run",
+    )
+    parser.add_argument(
+        "--max-submissions",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Cap submissions scraped per challenge (0 = unlimited, default: 0)",
+    )
+    parser.add_argument(
+        "--state",
+        action="append",
+        choices=["active", "previous", "upcoming"],
+        default=None,
+        dest="states",
+        help="Challenge state filter (repeatable, default: active+previous). e.g. --state active",
+    )
+    args = parser.parse_args()
+
+    session = os.getenv(_DEVTO_SESSION_KEY, "").strip()
+    remember_token = os.getenv(_DEVTO_REMEMBER_KEY, "").strip()
+    current_user = os.getenv(_DEVTO_CURRENT_USER_KEY, "").strip()
+
+    if not session:
+        raise SystemExit(
+            f"[error] No dev.to session cookie.\n"
+            f"  Set {_DEVTO_SESSION_KEY} in .env\n"
+            f"  (Copy _Devto_Forem_Session from browser DevTools → Application → Cookies → dev.to)"
+        )
+
+    if args.emit_unsent:
+        async def _emit_unsent() -> None:
+            from devpost_scraper.db import HarvestDB
+            db = HarvestDB(args.db)
+            unsent = db.all_unemitted_devto_participants()
+            if unsent:
+                print(f"[devto] {len(unsent)} unsent dev.to events…", file=sys.stderr)
+                await emit_devto_events(unsent)
+                for p in unsent:
+                    db.mark_event_emitted(p.hackathon_url, p.username)
+            else:
+                print("[devto] Nothing to send.", file=sys.stderr)
+            db.close()
+        asyncio.run(_emit_unsent())
+        return
+
+    states = args.states or ["active", "previous"]
+
+    asyncio.run(
+        _run_devto_harvest(
+            db_path=args.db,
+            session=session,
+            remember_token=remember_token,
+            current_user=current_user,
+            no_email=args.no_email,
+            emit_events=args.emit_events,
+            rescrape=args.rescrape,
+            max_submissions=args.max_submissions,
+            states=states,
+        )
     )
 
 

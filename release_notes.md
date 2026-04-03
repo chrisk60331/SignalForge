@@ -12,3 +12,12 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.7.4/)*
+
+## [0.8.0] — 2026-04-02
+
+- Added `signalforge-devto` command to scrape dev.to challenges.
+- Updated README with instructions and flags for `signalforge-devto`.
+- Modified `status.sh` to include dev.to data sections.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.8.0/)*

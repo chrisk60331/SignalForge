@@ -9,6 +9,15 @@ from devpost_scraper.models import Hackathon, HackathonParticipant, Rb2bVisitor
 _DEFAULT_DB = "devpost_harvest.db"
 
 _SCHEMA = """\
+CREATE TABLE IF NOT EXISTS devto_challenges (
+    tag             TEXT PRIMARY KEY,
+    title           TEXT,
+    challenge_url   TEXT,
+    state           TEXT,
+    first_seen_at   TEXT NOT NULL,
+    last_scraped_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS hackathons (
     id            INTEGER PRIMARY KEY,
     url           TEXT UNIQUE NOT NULL,
@@ -244,11 +253,12 @@ class HarvestDB:
         ]
 
     def all_unemitted_participants(self) -> list[HackathonParticipant]:
-        """Return Devpost-only participants with email but no event emitted (excludes GitHub forks)."""
+        """Return Devpost-only participants with email but no event emitted (excludes GitHub forks and dev.to)."""
         rows = self._conn.execute(
             "SELECT * FROM participants "
             "WHERE email != '' AND event_emitted_at IS NULL "
-            "AND hackathon_url NOT LIKE 'github:forks:%'"
+            "AND hackathon_url NOT LIKE 'github:forks:%' "
+            "AND hackathon_url NOT LIKE 'devto:challenge:%'"
         ).fetchall()
         return [
             HackathonParticipant(
@@ -390,6 +400,63 @@ class HarvestDB:
             (_now_iso(), hackathon_url),
         )
         self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # dev.to challenges
+    # ------------------------------------------------------------------
+
+    def upsert_devto_challenge(
+        self, tag: str, title: str, challenge_url: str, state: str
+    ) -> None:
+        now = _now_iso()
+        self._conn.execute(
+            """INSERT INTO devto_challenges (tag, title, challenge_url, state, first_seen_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(tag) DO UPDATE SET
+                   title=excluded.title,
+                   challenge_url=excluded.challenge_url,
+                   state=excluded.state
+            """,
+            (tag, title, challenge_url, state, now),
+        )
+        self._conn.commit()
+
+    def devto_challenge_scraped(self, tag: str) -> bool:
+        row = self._conn.execute(
+            "SELECT last_scraped_at FROM devto_challenges WHERE tag=?",
+            (tag,),
+        ).fetchone()
+        return row is not None and row["last_scraped_at"] is not None
+
+    def mark_devto_challenge_scraped(self, tag: str) -> None:
+        self._conn.execute(
+            "UPDATE devto_challenges SET last_scraped_at=? WHERE tag=?",
+            (_now_iso(), tag),
+        )
+        self._conn.commit()
+
+    def all_unemitted_devto_participants(self) -> list[HackathonParticipant]:
+        """Return dev.to challenge submitters with email but no event emitted."""
+        rows = self._conn.execute(
+            "SELECT * FROM participants "
+            "WHERE email != '' AND event_emitted_at IS NULL "
+            "AND hackathon_url LIKE 'devto:challenge:%' "
+            "ORDER BY hackathon_url"
+        ).fetchall()
+        return [
+            HackathonParticipant(
+                hackathon_url=r["hackathon_url"],
+                hackathon_title=r["hackathon_title"] or "",
+                username=r["username"],
+                name=r["name"] or "",
+                specialty=r["specialty"] or "",
+                profile_url=r["profile_url"] or "",
+                github_url=r["github_url"] or "",
+                linkedin_url=r["linkedin_url"] or "",
+                email=r["email"] or "",
+            )
+            for r in rows
+        ]
 
     # ------------------------------------------------------------------
     # RB2B visitors
