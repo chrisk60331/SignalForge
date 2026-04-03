@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
 import os
 import re
@@ -96,6 +97,68 @@ def _print_landing() -> None:
     print(_LANDING_BANNER.strip("\n"))
     print()
     print(_LANDING_MENU)
+
+
+# ── Run tracking ──────────────────────────────────────────────────────────────
+
+def _run_db_path() -> str:
+    """Find --db in sys.argv, or fall back to env/default."""
+    argv = sys.argv[1:]
+    for i, arg in enumerate(argv):
+        if arg == "--db" and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith("--db="):
+            return arg[5:]
+    return os.getenv("SIGNALFORGE_DB", "devpost_harvest.db")
+
+
+def _finish_run(run_id: int | None, db_path: str, rc: int) -> None:
+    if run_id is None:
+        return
+    from devpost_scraper.db import HarvestDB, _now_iso
+    try:
+        db = HarvestDB(db_path)
+        db.update_run(
+            run_id,
+            pid=os.getpid(),
+            status="done" if rc == 0 else "failed",
+            exit_code=rc,
+            finished_at=_now_iso(),
+        )
+        db.close()
+    except Exception:
+        pass
+
+
+def track_run(cmd: str):
+    """Decorator: record start/finish/failure of a *_main() in the runs table."""
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            from devpost_scraper.db import HarvestDB, _now_iso
+            db_path = _run_db_path()
+            run_args = [a for a in sys.argv[1:] if not a.startswith("--db")]
+            run_id: int | None = None
+            try:
+                db = HarvestDB(db_path)
+                run_id = db.create_run(cmd, run_args)
+                db.update_run(run_id, pid=os.getpid(), status="running")
+                db.close()
+            except Exception:
+                pass
+            try:
+                fn(*args, **kwargs)
+            except SystemExit as exc:
+                rc = exc.code if isinstance(exc.code, int) else 1
+                _finish_run(run_id, db_path, rc)
+                raise
+            except Exception:
+                _finish_run(run_id, db_path, 1)
+                raise
+            else:
+                _finish_run(run_id, db_path, 0)
+        return wrapper
+    return decorator
 
 
 def landing_main() -> None:
@@ -387,6 +450,7 @@ async def _run_participants(
         await emit_hackathon_events(all_participants)
 
 
+@track_run("signalforge-participants")
 def participants_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
     if len(sys.argv) == 1:
@@ -612,6 +676,7 @@ async def _run_github_forks(
     db.close()
 
 
+@track_run("signalforge-github-forks")
 def github_forks_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
     if len(sys.argv) == 1:
@@ -908,6 +973,7 @@ async def _run_github_search_unsent(db_path: str) -> None:
     db.close()
 
 
+@track_run("signalforge-gh-search")
 def github_search_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
     if len(sys.argv) == 1:
@@ -1360,6 +1426,7 @@ async def _run_emit_all(db_path: str) -> None:
     db.close()
 
 
+@track_run("signalforge-emit-all")
 def emit_all_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
 
@@ -1534,6 +1601,7 @@ async def _run_emit_batch(db_path: str, batch_size: int) -> None:
     db.close()
 
 
+@track_run("signalforge-emit-batch")
 def emit_batch_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
 
@@ -1852,6 +1920,7 @@ async def _run_devto_harvest(
     db.close()
 
 
+@track_run("signalforge-devto")
 def devto_harvest_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
     if len(sys.argv) == 1:
@@ -2086,6 +2155,7 @@ async def _run_hn_unsent(db_path: str) -> None:
     db.close()
 
 
+@track_run("signalforge-hn")
 def hn_harvest_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
     if len(sys.argv) == 1:
@@ -2163,6 +2233,7 @@ def hn_harvest_main() -> None:
     )
 
 
+@track_run("signalforge-harvest")
 def harvest_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
     if len(sys.argv) == 1:
@@ -2527,6 +2598,7 @@ def lookup_main() -> None:
         print()
 
 
+@track_run("signalforge-rb2b")
 def rb2b_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
     if len(sys.argv) == 1:
@@ -2738,6 +2810,7 @@ async def _run_auto(
     )
 
 
+@track_run("signalforge-auto")
 def auto_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
 
@@ -2840,6 +2913,7 @@ async def _run_auto_batch(
     await _run_emit_batch(db_path=db_path, batch_size=batch_size)
 
 
+@track_run("signalforge-auto-batch")
 def auto_batch_main() -> None:
     load_dotenv(_ENV_FILE, override=True)
 

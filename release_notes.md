@@ -41,3 +41,13 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.10.0/)*
+
+## [0.11.0] — 2026-04-03
+
+- Introduce run tracking for various CLI commands.
+- Enhance script to check 'runs' table existence.
+- Improve error handling during run execution.
+- Use decorator to track command execution.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.11.0/)*

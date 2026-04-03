@@ -192,11 +192,6 @@ if [[ "$SECTION" == "all" || "$SECTION" == "hn" ]]; then
   fi
 fi
 if [[ "$SECTION" == "all" || "$SECTION" == "runs" ]]; then
-  header "  Runs"
-
-  # Check if the runs table exists (older DBs may not have it yet)
-  runs_exists=$(_sqlite "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runs';" 2>/dev/null || echo 0)
-
   color_status() {
     case "$1" in
       running)     printf "\033[33m%s\033[0m" "$1" ;;
@@ -207,13 +202,15 @@ if [[ "$SECTION" == "all" || "$SECTION" == "runs" ]]; then
     esac
   }
 
+  runs_exists=$(_sqlite "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runs';" 2>/dev/null || echo 0)
+
   if [[ "${runs_exists:-0}" -eq 0 ]]; then
-    echo "    No run history yet — use signalforge-run <cmd>"
+    echo "    No run history yet."
   else
     while IFS='|' read -r raw_cmd raw_status raw_ts; do
       label="${raw_cmd#signalforge-}"
       label="${label:0:16}"
-      ts="${raw_ts:11:5}"   # HH:MM only
+      ts="${raw_ts:11:5}"
       printf "          %-16s  %-11s  %s\n" "$label" "$(color_status "$raw_status")" "$ts"
     done < <(_sqlite "
 SELECT command, status, REPLACE(started_at,'T',' ')
