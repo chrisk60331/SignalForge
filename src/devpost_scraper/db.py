@@ -113,7 +113,12 @@ class HarvestDB:
     def upsert_participants(
         self, participants: list[HackathonParticipant],
     ) -> list[HackathonParticipant]:
-        """Insert or update participants. Returns only the NEW ones (not previously seen)."""
+        """Insert or update participants. Returns only the NEW ones (not previously seen).
+
+        Email-level dedup: if a participant's email already exists in the DB (from any
+        hackathon), they are skipped entirely — the existing row keeps its event_emitted_at
+        flag and won't trigger duplicate Customer.io events.
+        """
         now = _now_iso()
         new: list[HackathonParticipant] = []
 
@@ -124,6 +129,15 @@ class HarvestDB:
             ).fetchone()
 
             if row is None:
+                # Email-level dedup: skip insert if this email is already in the DB.
+                if p.email and p.email.strip():
+                    email_row = self._conn.execute(
+                        "SELECT 1 FROM participants WHERE LOWER(email)=? LIMIT 1",
+                        (p.email.strip().lower(),),
+                    ).fetchone()
+                    if email_row is not None:
+                        continue
+
                 new.append(p)
                 self._conn.execute(
                     """INSERT INTO participants
@@ -157,28 +171,47 @@ class HarvestDB:
         self._conn.commit()
         return new
 
+    def _dedup_safe_email(self, email: str, hackathon_url: str, username: str) -> str:
+        """Return email only if no OTHER row already owns it; empty string otherwise."""
+        if not email or not email.strip():
+            return email
+        conflict = self._conn.execute(
+            """SELECT 1 FROM participants
+               WHERE LOWER(email)=?
+                 AND NOT (hackathon_url=? AND username=?)
+               LIMIT 1""",
+            (email.strip().lower(), hackathon_url, username),
+        ).fetchone()
+        return "" if conflict else email
+
     def update_participant_enrichment(self, p: HackathonParticipant) -> None:
-        """Update email/github/linkedin fields for a single participant (commits immediately)."""
+        """Update email/github/linkedin fields for a single participant (commits immediately).
+
+        Email is suppressed if another row already owns it, preventing duplicate events.
+        """
+        safe_email = self._dedup_safe_email(p.email, p.hackathon_url, p.username)
         self._conn.execute(
             """UPDATE participants
                SET email=?, github_url=?, linkedin_url=?, last_seen_at=?
                WHERE hackathon_url=? AND username=?""",
-            (p.email, p.github_url, p.linkedin_url, _now_iso(), p.hackathon_url, p.username),
+            (safe_email, p.github_url, p.linkedin_url, _now_iso(), p.hackathon_url, p.username),
         )
         self._conn.commit()
 
     def update_participant_enrichment_batch(self, participants: list[HackathonParticipant]) -> None:
-        """Bulk-update email/github/linkedin for multiple participants in one commit."""
+        """Bulk-update email/github/linkedin for multiple participants in one commit.
+
+        Each email is suppressed if another row already owns it, preventing duplicate events.
+        """
         now = _now_iso()
-        self._conn.executemany(
-            """UPDATE participants
-               SET email=?, github_url=?, linkedin_url=?, last_seen_at=?
-               WHERE hackathon_url=? AND username=?""",
-            [
-                (p.email, p.github_url, p.linkedin_url, now, p.hackathon_url, p.username)
-                for p in participants
-            ],
-        )
+        for p in participants:
+            safe_email = self._dedup_safe_email(p.email, p.hackathon_url, p.username)
+            self._conn.execute(
+                """UPDATE participants
+                   SET email=?, github_url=?, linkedin_url=?, last_seen_at=?
+                   WHERE hackathon_url=? AND username=?""",
+                (safe_email, p.github_url, p.linkedin_url, now, p.hackathon_url, p.username),
+            )
         self._conn.commit()
 
     def mark_event_emitted(self, hackathon_url: str, username: str) -> None:
