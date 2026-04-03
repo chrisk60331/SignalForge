@@ -21,3 +21,13 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.8.0/)*
+
+## [0.9.0] — 2026-04-03
+
+- Add deduplication script.
+- Add status monitoring script.
+- Add WTF panel management scripts.
+- Include initial .gitignore configuration.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.9.0/)*

@@ -1,0 +1,156 @@
+# SignalForge — WTF terminal dashboard
+#
+# Install:  brew install wtfutil
+
+wtf:
+  colors:
+    background: black
+    border:
+      focusable: green
+      focused: gold
+      normal: gray
+  grid:
+    columns: [44, 44, 44, 44]
+    rows: [12,9,9,9]
+  refreshInterval: 60
+
+  mods:
+
+    runs:
+      type: cmdrunner
+      title: "  Runs"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "runs"]
+      enabled: true
+      position:
+        top: 0
+        left: 0
+        height: 1
+        width: 1
+      refreshInterval: 30s
+
+    banner:
+      type: cmdrunner
+      title: "  SignalForge — WTF terminal dashboard"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "banner"]
+      enabled: true
+      position:
+        top: 0
+        left: 1
+        height: 1
+        width: 2
+      refreshInterval: 30s
+
+    freshness:
+      type: cmdrunner
+      title: "  Freshness"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "freshness"]
+      enabled: true
+      position:
+        top: 0
+        left: 3
+        height: 1
+        width: 1
+      refreshInterval: 30s
+
+    # ── Row 0, Left ──────────────────────────────────────────────────────────
+    hackathons:
+      type: cmdrunner
+      title: "🏆  Devpost — Hackathons"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "hackathons"]
+      enabled: true
+      position:
+        top: 1
+        left: 0
+        height: 1
+        width: 2
+      refreshInterval: 30s
+
+        # ── Row 0, Left ──────────────────────────────────────────────────────────
+    empty:
+      type: cmdrunner
+      title: "  Empty Campaign Slot"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 1
+        left: 2
+        height: 1
+        width: 2
+      refreshInterval: 30s
+
+    # ── Row 1, Left ──────────────────────────────────────────────────────────
+    forks:
+      type: cmdrunner
+      title: "🍴  GitHub Forks"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "forks"]
+      enabled: true
+      position:
+        top: 3
+        left: 2
+        height: 1
+        width: 2
+      refreshInterval: 30s
+
+    # ── Row 1, Right ─────────────────────────────────────────────────────────
+    devto:
+      type: cmdrunner
+      title: "🟣  dev.to — Challenges"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "devto"]
+      enabled: true
+      position:
+        top: 2
+        left: 0
+        height: 1
+        width: 2
+      refreshInterval: 30s
+
+    # ── Row 2, Left ──────────────────────────────────────────────────────────
+    search:
+      type: cmdrunner
+      title: "🔍  GitHub Search"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "search"]
+      enabled: true
+      position:
+        top: 3
+        left: 0
+        height: 1
+        width: 2
+      refreshInterval: 30s
+
+    # ── Row 2, Right ─────────────────────────────────────────────────────────
+
+    # ── Row 3, Left ──────────────────────────────────────────────────────────
+    rb2b:
+      type: cmdrunner
+      title: "👁   RB2B — Visitors"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "rb2b"]
+      enabled: true
+      position:
+        top: 2
+        left: 2
+        height: 1 
+        width: 2
+      refreshInterval: 30s
+
+    # ── Row 0, Right ─────────────────────────────────────────────────────────
+    summary:
+      type: cmdrunner
+      title: "📊  Summary"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "summary"]
+      enabled: true
+      position:
+        top: 4
+        left: 1
+        height: 1
+        width: 2
+      refreshInterval: 30s

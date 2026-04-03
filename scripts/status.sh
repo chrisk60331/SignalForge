@@ -72,7 +72,7 @@ eval "$(_sqlite <<'SQL'
 SELECT 'total_h='    || COUNT(*)                                                                                      FROM hackathons;
 SELECT 'scraped_h='  || COUNT(*)                                                                                      FROM hackathons WHERE last_scraped_at IS NOT NULL;
 SELECT 'last_h='     || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_scraped_at),1,19),'T',' '), 'localtime'),'never')  FROM hackathons;
-
+SELECT 'last_h_days=' || (CURRENT_DATE - MAX(last_scraped_at)) FROM hackathons;
 SELECT 'total_p='    || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND hackathon_url NOT LIKE 'github:search:%' AND hackathon_url NOT LIKE 'devto:challenge:%';
 SELECT 'w_email_p='  || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND hackathon_url NOT LIKE 'github:search:%' AND hackathon_url NOT LIKE 'devto:challenge:%' AND email != '';
 SELECT 'emitted_p='  || COUNT(*)  FROM participants WHERE hackathon_url NOT LIKE 'github:forks:%' AND hackathon_url NOT LIKE 'github:search:%' AND hackathon_url NOT LIKE 'devto:challenge:%' AND event_emitted_at IS NOT NULL;
@@ -104,6 +104,7 @@ SELECT 'last_v='          || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(
 SELECT 'emitted_today_v=' || COUNT(*) FROM rb2b_visitors WHERE DATE(strftime('%Y-%m-%d', REPLACE(SUBSTR(event_emitted_at,1,19),'T',' '), 'localtime')) = DATE('now','localtime');
 SELECT 'visit_first_v='   || COALESCE(MIN(SUBSTR(source_file, INSTR(source_file,'rb2b_')+5, 10)),'never') FROM rb2b_visitors WHERE source_file LIKE '%rb2b_%';
 SELECT 'visit_last_v='    || COALESCE(MAX(SUBSTR(source_file, INSTR(source_file,'rb2b_')+5, 10)),'never') FROM rb2b_visitors WHERE source_file LIKE '%rb2b_%';
+SELECT 'last_v_days='       || (CURRENT_DATE - MAX(imported_at)) FROM rb2b_visitors;
 SQL
 )" 2>/dev/null || true
 fi
@@ -117,6 +118,7 @@ SELECT 'total_f_final='   || COUNT(*)                      FROM participants WHE
 SELECT 'w_email_f_final=' || COUNT(*)                      FROM participants WHERE hackathon_url LIKE 'github:forks:%' AND email != '';
 SELECT 'unsent_f_final='  || COUNT(*)                      FROM participants WHERE hackathon_url LIKE 'github:forks:%' AND email != '' AND event_emitted_at IS NULL;
 SELECT 'last_f='          || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_seen_at),1,19),'T',' '), 'localtime'),'never') FROM participants WHERE hackathon_url LIKE 'github:forks:%';
+SELECT 'last_f_days='       || (CURRENT_DATE - MAX(last_seen_at)) FROM participants WHERE hackathon_url LIKE 'github:forks:%';
 SQL
 )" 2>/dev/null || true
 
@@ -128,6 +130,7 @@ SELECT 'total_s_final='    || COUNT(*)                      FROM participants WH
 SELECT 'w_email_s_final='  || COUNT(*)                      FROM participants WHERE hackathon_url LIKE 'github:search:%' AND email != '';
 SELECT 'unsent_s_final='   || COUNT(*)                      FROM participants WHERE hackathon_url LIKE 'github:search:%' AND email != '' AND event_emitted_at IS NULL;
 SELECT 'last_s='           || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_seen_at),1,19),'T',' '), 'localtime'),'never') FROM participants WHERE hackathon_url LIKE 'github:search:%';
+SELECT 'last_s_days='       || (CURRENT_DATE - MAX(last_seen_at)) FROM participants WHERE hackathon_url LIKE 'github:search:%';
 SQL
 )" 2>/dev/null || true
 
@@ -143,6 +146,7 @@ SELECT 'total_dt_final='        || COUNT(*)   FROM participants WHERE hackathon_
 SELECT 'w_email_dt_final='      || COUNT(*)   FROM participants WHERE hackathon_url LIKE 'devto:challenge:%' AND email != '';
 SELECT 'unsent_dt_final='       || COUNT(*)   FROM participants WHERE hackathon_url LIKE 'devto:challenge:%' AND email != '' AND event_emitted_at IS NULL;
 SELECT 'last_dt='               || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_scraped_at),1,19),'T',' '), 'localtime'),'never') FROM devto_challenges;
+SELECT 'last_dt_days='          || (CURRENT_DATE - MAX(last_scraped_at)) FROM devto_challenges;
 SQL
   )" 2>/dev/null || true
 fi
@@ -166,7 +170,31 @@ BANNER
   echo ""
   printf "    %-44s %-6s %-6s %-7s %-6s \n" "DB: ${DB}"   "v${SF_VERSION:-?}"
 fi
-
+if [[ "$SECTION" == "all" || "$SECTION" == "empty" ]]; then
+  printf "\n\n\n%-34s%-20s\n" "" "Waiting For Campaign..."
+fi
+if [[ "$SECTION" == "all" || "$SECTION" == "runs" ]]; then
+  header "  Runs"
+  printf "      %-10s %-10s" "Current: " "$(ps -eaf|grep signalforge|grep -v grep|wc -l)"
+fi
+# ── Render: Devpost hackathons ────────────────────────────────────────────────
+if [[ "$SECTION" == "all" || "$SECTION" == "freshness" ]]; then
+  color_days() {
+    if [[ "$1" -gt 1 ]]; then
+      printf "\033[31m$1\033[0m" 
+    elif [[ "$1" -eq 0 ]]; then
+      printf "\033[32m%s\033[0m" "$1"
+    else
+      printf "\033[33m%s\033[0m" "$1"
+    fi
+  }
+  header "  Freshness"
+  printf "          %-10s $(color_days $last_v_days)\n" "rb2b"
+  printf "          %-10s $(color_days $last_dt_days)\n" "devto"
+  printf "          %-10s $(color_days $last_f_days)\n" "forks"
+  printf "          %-10s $(color_days $last_s_days)\n" "search"
+  printf "          %-10s $(color_days $last_h_days)\n" "devpost"
+ fi
 
 # ── Render: Devpost hackathons ────────────────────────────────────────────────
 if [[ "$SECTION" == "all" || "$SECTION" == "hackathons" ]]; then
@@ -257,11 +285,7 @@ if [[ "$SECTION" == "all" || "$SECTION" == "summary" ]]; then
     row "Total leads with email"    "Connecting to database..."
     row "Total unsent events"       "Connecting to database..."
   fi
-fi
 
-
-# ── Render: Customer.io campaigns ─────────────────────────────────────────────
-if [[ "$SECTION" == "all" || "$SECTION" == "cio" ]]; then
   SCRIPT_DIR_CIO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   ENV_FILE="$SCRIPT_DIR_CIO/../.env"
   [[ -f "$ENV_FILE" ]] && set -a && source "$ENV_FILE" && set +a
