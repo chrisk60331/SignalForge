@@ -23,6 +23,7 @@ SignalForge scrapes Devpost hackathons, GitHub forks, and RB2B visitor exports �
 | `signalforge-participants` | Scrape one hackathon's participants → CSV |
 | `signalforge-harvest` | Walk the full hackathon listing → SQLite → delta Customer.io events |
 | `signalforge-devto` | Walk dev.to challenges → scrape submitters → emails via GitHub → SQLite → emit events |
+| `signalforge-hn` | Scrape HN Show posts → filter GitHub links → mine owner emails → SQLite → emit `hacknews_posts` events |
 | `signalforge-github-forks` | Mine fork owners from any GitHub repo → emails → SQLite |
 | `signalforge-gh-search` | Search GitHub repos by keyword → collect owner emails → SQLite |
 | `signalforge-rb2b` | Import RB2B visitor CSVs → SQLite → `visited_site` events |
@@ -274,6 +275,59 @@ DEV_TO_CURRENT_USER=<value of current_user>                  # optional
 
 **Customer.io event**: `devto_challenge`
 Payload: `challenge_url`, `challenge_title`, `username`, `name`, `profile_url`, `github_url`, `article_url`.
+
+---
+
+### `signalforge-hn` — Hacker News Show HN
+
+Scrapes [https://news.ycombinator.com/show](https://news.ycombinator.com/show), filters to posts that link to GitHub, extracts the repo owner username, looks up real emails via the GitHub API, and stores everything in SQLite under the `hacknews_posts` campaign.
+
+**How it works:**
+1. Fetches HN Show pages (30 posts/page)
+2. Keeps only posts whose URL points to `github.com`
+3. Extracts the GitHub repo owner (first path segment of the URL)
+4. De-duplicates by owner — each GitHub user appears at most once
+5. Looks up email via GitHub API (3 strategies: profile → commits → push events)
+6. Stores as `HackathonParticipant` with `hackathon_url=hn:show`
+7. Optionally emits `hacknews_posts` Customer.io events
+
+```bash
+# Scrape page 1 of HN Show and enrich emails
+signalforge-hn
+
+# Scrape 3 pages (~90 posts)
+signalforge-hn --pages 3
+
+# Fast mode — no email enrichment
+signalforge-hn --pages 2 --no-email
+
+# Scrape + emit Customer.io events in one shot
+signalforge-hn --emit-events
+
+# Cap emit to 20 contacts (for testing)
+signalforge-hn --emit-events --emit-limit 20
+
+# Skip scraping — just emit all queued unsent events
+signalforge-hn --emit-unsent
+
+# Re-enrich already-known owners
+signalforge-hn --force-email
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--pages N` | `1` | HN Show pages to scrape (~30 posts each) |
+| `--db PATH` | `devpost_harvest.db` | SQLite path |
+| `--no-email` | off | Skip enrichment |
+| `--force-email` | off | Re-enrich owners already in the DB |
+| `--emit-events` | off | Emit `hacknews_posts` Customer.io events |
+| `--emit-limit N` | `0` (all) | Cap emit to N contacts |
+| `--emit-unsent` | off | Emit only — no scraping |
+
+**Customer.io event**: `hacknews_posts`
+Payload: `post_title`, `github_url`, `username`, `profile_url`.
 
 ---
 

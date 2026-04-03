@@ -31,3 +31,13 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.9.0/)*
+
+## [0.10.0] — 2026-04-03
+
+- Introduced `signalforge-hn` for scraping Hacker News Show posts with GitHub links.
+- Updated `README.md` with usage instructions for `signalforge-hn`.
+- Enhanced `status.sh` to show overviews of HN Show scrapes.
+- Added `argcomplete` to dependencies in `pyproject.toml`.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.10.0/)*

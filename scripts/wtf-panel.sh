@@ -2,7 +2,7 @@
 # WTF dashboard panel wrapper — resolves project paths from script location.
 # Called by wtf.yml CmdRunner modules: wtf-panel.sh <section>
 #
-# Sections: hackathons | forks | search | devto | rb2b | summary | cio | sf
+# Sections: hackathons | forks | search | devto | hn | rb2b | summary | cio | sf
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"

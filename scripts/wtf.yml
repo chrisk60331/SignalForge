@@ -10,7 +10,7 @@ wtf:
       focused: gold
       normal: gray
   grid:
-    columns: [44, 44, 44, 44]
+    columns: [47, 47, 47, 47]
     rows: [12,9,9,9]
   refreshInterval: 60
 
@@ -44,7 +44,7 @@ wtf:
 
     freshness:
       type: cmdrunner
-      title: "  Freshness"
+      title: "  Staleness"
       cmd: "bash"
       args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "freshness"]
       enabled: true
@@ -69,12 +69,12 @@ wtf:
         width: 2
       refreshInterval: 30s
 
-        # ── Row 0, Left ──────────────────────────────────────────────────────────
-    empty:
+        # ── Row 1, Right ─────────────────────────────────────────────────────────
+    hn:
       type: cmdrunner
-      title: "  Empty Campaign Slot"
+      title: "🟠  HN Show — GitHub Posts"
       cmd: "bash"
-      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "hn"]
       enabled: true
       position:
         top: 1

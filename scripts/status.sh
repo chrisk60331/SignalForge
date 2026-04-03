@@ -134,6 +134,17 @@ SELECT 'last_s_days='       || (CURRENT_DATE - MAX(last_seen_at)) FROM participa
 SQL
 )" 2>/dev/null || true
 
+# ── HN Show scalar query ───────────────────────────────────────────────────────
+total_hn=0; w_email_hn=0; unsent_hn=0; last_hn=never; last_hn_days=0
+eval "$(_sqlite <<'SQL'
+SELECT 'total_hn='    || COUNT(*)   FROM participants WHERE hackathon_url LIKE 'hn:show%';
+SELECT 'w_email_hn='  || COUNT(*)   FROM participants WHERE hackathon_url LIKE 'hn:show%' AND email != '';
+SELECT 'unsent_hn='   || COUNT(*)   FROM participants WHERE hackathon_url LIKE 'hn:show%' AND email != '' AND event_emitted_at IS NULL;
+SELECT 'last_hn='     || COALESCE(strftime('%Y-%m-%dT%H:%M', REPLACE(SUBSTR(MAX(last_seen_at),1,19),'T',' '), 'localtime'),'never') FROM participants WHERE hackathon_url LIKE 'hn:show%';
+SELECT 'last_hn_days=' || COALESCE((CURRENT_DATE - MAX(DATE(last_seen_at))), 0) FROM participants WHERE hackathon_url LIKE 'hn:show%';
+SQL
+)" 2>/dev/null || true
+
 # ── dev.to challenge scalar query ─────────────────────────────────────────────
 total_dt_challenges=0; scraped_dt_challenges=0
 total_dt_final=0; w_email_dt_final=0; unsent_dt_final=0; last_dt=never
@@ -170,12 +181,45 @@ BANNER
   echo ""
   printf "    %-44s %-6s %-6s %-7s %-6s \n" "DB: ${DB}"   "v${SF_VERSION:-?}"
 fi
-if [[ "$SECTION" == "all" || "$SECTION" == "empty" ]]; then
-  printf "\n\n\n%-34s%-20s\n" "" "Waiting For Campaign..."
+if [[ "$SECTION" == "all" || "$SECTION" == "hn" ]]; then
+  header "🟠  HN Show — GitHub Posts"
+
+  if [[ "$total_hn" -eq 0 ]]; then
+    echo "    No HN data yet — run signalforge-hn to scrape."
+  else
+    printf "    %-32s %-9s %-9s %-9s %-11s \n" "Posts" "Total" "Emails" "Outbox" "Last Updated"
+    printf "    %-32s %-9s %-9s %-9s %-11s \n" "$(comma $total_hn)" "$(comma $total_hn)" "$(comma $w_email_hn)" "$(comma $unsent_hn)" "$last_hn"
+  fi
 fi
 if [[ "$SECTION" == "all" || "$SECTION" == "runs" ]]; then
   header "  Runs"
-  printf "      %-10s %-10s" "Current: " "$(ps -eaf|grep signalforge|grep -v grep|wc -l)"
+
+  # Check if the runs table exists (older DBs may not have it yet)
+  runs_exists=$(_sqlite "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runs';" 2>/dev/null || echo 0)
+
+  color_status() {
+    case "$1" in
+      running)     printf "\033[33m%s\033[0m" "$1" ;;
+      done)        printf "\033[32m%s\033[0m" "$1" ;;
+      failed)      printf "\033[31m%s\033[0m" "$1" ;;
+      interrupted) printf "\033[35m%s\033[0m" "$1" ;;
+      *)           printf "%s" "$1" ;;
+    esac
+  }
+
+  if [[ "${runs_exists:-0}" -eq 0 ]]; then
+    echo "    No run history yet — use signalforge-run <cmd>"
+  else
+    while IFS='|' read -r raw_cmd raw_status raw_ts; do
+      label="${raw_cmd#signalforge-}"
+      label="${label:0:16}"
+      ts="${raw_ts:11:5}"   # HH:MM only
+      printf "          %-16s  %-11s  %s\n" "$label" "$(color_status "$raw_status")" "$ts"
+    done < <(_sqlite "
+SELECT command, status, REPLACE(started_at,'T',' ')
+FROM runs ORDER BY id DESC LIMIT 6;
+" 2>/dev/null)
+  fi
 fi
 # ── Render: Devpost hackathons ────────────────────────────────────────────────
 if [[ "$SECTION" == "all" || "$SECTION" == "freshness" ]]; then
@@ -188,9 +232,10 @@ if [[ "$SECTION" == "all" || "$SECTION" == "freshness" ]]; then
       printf "\033[33m%s\033[0m" "$1"
     fi
   }
-  header "  Freshness"
+  header "  Staleness"
   printf "          %-10s $(color_days $last_v_days)\n" "rb2b"
   printf "          %-10s $(color_days $last_dt_days)\n" "devto"
+  printf "          %-10s $(color_days $last_hn_days)\n" "hn show"
   printf "          %-10s $(color_days $last_f_days)\n" "forks"
   printf "          %-10s $(color_days $last_s_days)\n" "search"
   printf "          %-10s $(color_days $last_h_days)\n" "devpost"

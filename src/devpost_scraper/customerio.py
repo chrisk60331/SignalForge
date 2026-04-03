@@ -295,6 +295,42 @@ async def emit_devto_events(participants: list[HackathonParticipant]) -> None:
     print(f"[cio] Emitted {sent}/{len(eligible)} {_DEVTO_CHALLENGE_EVENT} events", file=sys.stderr)
 
 
+_HACKNEWS_POSTS_EVENT = "hacknews_posts"
+
+
+async def emit_hacknews_posts_events(participants: list[HackathonParticipant]) -> None:
+    """Emit ``hacknews_posts`` Customer.io events for HN Show GitHub posters."""
+    eligible = [p for p in participants if p.email]
+    if not eligible:
+        print("[cio] No HN posters with emails — skipping event emission", file=sys.stderr)
+        return
+
+    svc = _build_service()
+    sent = 0
+
+    for p in eligible:
+        name_parts = p.name.split(maxsplit=1)
+        first = name_parts[0] if name_parts else ""
+        last = name_parts[1] if len(name_parts) > 1 else ""
+
+        await svc.identify_user(p.email, email=p.email, first_name=first, last_name=last)
+
+        data = {
+            "post_title": p.specialty,
+            "github_url": p.github_url,
+            "username": p.username,
+            "profile_url": p.profile_url,
+        }
+        ok = await svc.track_event(p.email, _HACKNEWS_POSTS_EVENT, data)
+        if ok:
+            sent += 1
+            print(f"  [cio] {_HACKNEWS_POSTS_EVENT} → {p.email}", file=sys.stderr)
+        else:
+            print(f"  [cio] FAILED {p.email}", file=sys.stderr)
+
+    print(f"[cio] Emitted {sent}/{len(eligible)} {_HACKNEWS_POSTS_EVENT} events", file=sys.stderr)
+
+
 async def emit_visited_site_events(visitors: list[Rb2bVisitor]) -> int:
     """Identify + fire visited_site for each RB2B visitor that has an email.
 

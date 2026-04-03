@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import argcomplete
+
 _FORK_EMAIL_CONCURRENCY = 1  # concurrent GitHub API calls during fork email enrichment
 
 from dotenv import load_dotenv, set_key
@@ -20,7 +22,7 @@ from devpost_scraper.backboard_client import (
     ensure_assistant,
     run_in_thread,
 )
-from devpost_scraper.customerio import emit_devto_events, emit_github_fork_events, emit_github_search_events, emit_hackathon_events, emit_visited_site_events, select_event_name
+from devpost_scraper.customerio import emit_devto_events, emit_github_fork_events, emit_github_search_events, emit_hacknews_posts_events, emit_hackathon_events, emit_visited_site_events, select_event_name
 from devpost_scraper.csv_export import write_projects
 from devpost_scraper.models import DevpostProject, Hackathon, HackathonParticipant, Rb2bVisitor
 from devpost_scraper.scraper import (
@@ -36,6 +38,7 @@ from devpost_scraper.scraper import (
     get_project_details,
     list_devto_challenges,
     list_hackathons,
+    list_hn_show_posts,
     search_github_repos,
     search_projects,
 )
@@ -59,7 +62,7 @@ Command Menu:
   [4]  signalforge-github-forks    → Mine GitHub fork owners + optional email enrichment
   [5]  signalforge-gh-search       → Search GitHub repos by keyword + mine owner emails
   [6]  signalforge-rb2b            → Import RB2B visitor CSVs + emit visited_site events
-  [7]  signalforge-auto            → Full daily scrape: RB2B + Harvest + all Forks (no emit)
+  [7]  signalforge-auto            → Full daily scrape: RB2B + Harvest + all Forks + HN Show (no emit)
   [8]  signalforge-auto-batch      → Daily scrape + emit batch in one cron command
   [9]  signalforge-emit-all        → Flush all unsent events across every source at once
   [10] signalforge-emit-batch      → Emit up to --batch-size events per source (cron-friendly)
@@ -68,6 +71,7 @@ Command Menu:
   [12] signalforge-lookup          → Search the DB by email, name, or username
   [13] signalforge-assistant       → Interactive AI analyst: query DB, export CSV, insights
   [14] signalforge-devto           → Walk dev.to challenges → scrape submitters → SQLite → emit events
+  [15] signalforge-hn              → Scrape HN Show posts → filter GitHub → mine emails → emit hacknews_posts events
 """
 
 # ─── ANSI terminal helpers ──────────────────────────────────────────────────
@@ -283,6 +287,7 @@ def main() -> None:
         default=None,
         help="Output CSV file path (default: stdout)",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
     asyncio.run(run(search_terms=args.search_terms, output=args.output))
 
@@ -422,6 +427,7 @@ def participants_main() -> None:
         default=False,
         help="Emit devpost_hackathon events to Customer.io (requires CUSTOMERIO_SITE_ID and CUSTOMERIO_API_KEY in .env)",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     if not args.output:
@@ -691,6 +697,7 @@ def github_forks_main() -> None:
             "Does not touch Devpost or RB2B rows."
         ),
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     if args.emit_unsent:
@@ -976,6 +983,7 @@ def github_search_main() -> None:
             "already in the DB (across all tracked queries)."
         ),
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     if args.emit_unsent:
@@ -1326,7 +1334,18 @@ async def _run_emit_all(db_path: str) -> None:
     else:
         print("[emit-all] dev.to: nothing to send.", file=sys.stderr)
 
-    # ── 5. RB2B visitors ───────────────────────────────────────────────────────
+    # ── 5. HN Show posters ────────────────────────────────────────────────────
+    hn_unsent = db.all_unemitted_hn_participants()
+    if hn_unsent:
+        print(f"[emit-all] {len(hn_unsent)} HN Show posters…", file=sys.stderr)
+        await emit_hacknews_posts_events(hn_unsent)
+        for p in hn_unsent:
+            db.mark_event_emitted(p.hackathon_url, p.username)
+        grand_total += len(hn_unsent)
+    else:
+        print("[emit-all] HN: nothing to send.", file=sys.stderr)
+
+    # ── 6. RB2B visitors ───────────────────────────────────────────────────────
     rb2b_unsent = db.get_unemitted_rb2b_visitors()
     if rb2b_unsent:
         print(f"[emit-all] {len(rb2b_unsent)} RB2B visitors…", file=sys.stderr)
@@ -1354,6 +1373,7 @@ def emit_all_main() -> None:
         default="devpost_harvest.db",
         help="SQLite database path (default: devpost_harvest.db)",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
     asyncio.run(_run_emit_all(db_path=args.db))
 
@@ -1366,7 +1386,8 @@ async def _run_emit_batch(db_path: str, batch_size: int) -> None:
     3. GitHub fork owners              → ``github_fork``
     4. GitHub search repo owners       → ``github_search``
     5. dev.to challenge submitters     → ``devto_challenge``
-    6. RB2B identified visitors        → ``visited_site``
+    6. HN Show posters                 → ``hacknews_posts``
+    7. RB2B identified visitors        → ``visited_site``
     """
     from collections import defaultdict
 
@@ -1479,7 +1500,22 @@ async def _run_emit_batch(db_path: str, batch_size: int) -> None:
     else:
         print("[emit-batch] devto_challenge: nothing to send.", file=sys.stderr)
 
-    # ── 6: RB2B visitors ──────────────────────────────────────────────────────
+    # ── 6: HN Show posters ────────────────────────────────────────────────────
+    hn_unsent = db.all_unemitted_hn_participants()
+    if hn_unsent:
+        batch_hn = hn_unsent[:batch_size]
+        print(
+            f"[emit-batch] hacknews_posts: {len(batch_hn)}/{len(hn_unsent)} queued…",
+            file=sys.stderr,
+        )
+        await emit_hacknews_posts_events(batch_hn)
+        for p in batch_hn:
+            db.mark_event_emitted(p.hackathon_url, p.username)
+        grand_total += len(batch_hn)
+    else:
+        print("[emit-batch] hacknews_posts: nothing to send.", file=sys.stderr)
+
+    # ── 7: RB2B visitors ──────────────────────────────────────────────────────
     rb2b_unsent = db.get_unemitted_rb2b_visitors()
     if rb2b_unsent:
         batch_rb2b = rb2b_unsent[:batch_size]
@@ -1522,6 +1558,7 @@ def emit_batch_main() -> None:
         default="devpost_harvest.db",
         help="SQLite database path (default: devpost_harvest.db)",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
     asyncio.run(_run_emit_batch(db_path=args.db, batch_size=args.batch_size))
 
@@ -1874,6 +1911,7 @@ def devto_harvest_main() -> None:
         dest="states",
         help="Challenge state filter (repeatable, default: active+previous). e.g. --state active",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     session = os.getenv(_DEVTO_SESSION_KEY, "").strip()
@@ -1916,6 +1954,211 @@ def devto_harvest_main() -> None:
             rescrape=args.rescrape,
             max_submissions=args.max_submissions,
             states=states,
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# signalforge-hn: Hacker News Show HN → GitHub → email → Customer.io
+# ---------------------------------------------------------------------------
+
+_HN_SOURCE_KEY = "hn:show"
+
+
+async def _run_hn_harvest(
+    *,
+    pages: int,
+    db_path: str,
+    no_email: bool,
+    emit_events: bool,
+    force_email: bool,
+    emit_limit: int = 0,
+) -> None:
+    from devpost_scraper.db import HarvestDB
+
+    db = HarvestDB(db_path)
+
+    print(
+        f"[hn] Fetching HN Show posts (pages={pages}, GitHub-only)…",
+        file=sys.stderr,
+    )
+    try:
+        raw_posts = await list_hn_show_posts(pages=pages)
+    except Exception as exc:
+        db.close()
+        raise SystemExit(f"[error] HN fetch failed: {exc}") from exc
+
+    print(f"[hn] Found {len(raw_posts)} unique GitHub-linked posts", file=sys.stderr)
+
+    participants: list[HackathonParticipant] = []
+    for post in raw_posts:
+        owner = post["github_url"].rstrip("/").rsplit("/", 1)[-1]
+        participants.append(
+            HackathonParticipant(
+                hackathon_url=_HN_SOURCE_KEY,
+                hackathon_title="Hacker News Show HN",
+                username=owner,
+                name=owner,
+                profile_url=post["hn_profile_url"],
+                github_url=post["github_url"],
+                specialty=post["title"],
+                linkedin_url="",
+                email="",
+            )
+        )
+
+    new_only = db.upsert_participants(participants)
+    print(
+        f"[hn] DB: {len(new_only)} new, {len(participants) - len(new_only)} already known",
+        file=sys.stderr,
+    )
+
+    to_enrich: list[HackathonParticipant] = participants if force_email else new_only
+
+    if not no_email and to_enrich:
+        print(
+            f"[hn] Email enrichment for {len(to_enrich)} accounts…",
+            file=sys.stderr,
+        )
+        sem = asyncio.Semaphore(_FORK_EMAIL_CONCURRENCY)
+
+        async def _enrich_one(p: HackathonParticipant) -> None:
+            async with sem:
+                try:
+                    email = await get_github_email(p.github_url)
+                    p.email = email
+                    if email:
+                        print(f"  [email] {email} ← {p.username}", file=sys.stderr)
+                except Exception as exc:
+                    print(f"  [warn] enrich failed for {p.username}: {exc}", file=sys.stderr)
+
+        await asyncio.gather(*(_enrich_one(p) for p in to_enrich))
+        db.update_participant_enrichment_batch(to_enrich)
+
+    if emit_events and not no_email:
+        unemitted = db.get_unemitted_participants(_HN_SOURCE_KEY)
+        if unemitted:
+            if emit_limit > 0:
+                unemitted = unemitted[:emit_limit]
+                print(
+                    f"[hn] --emit-limit {emit_limit}: capping to {len(unemitted)} person(s).",
+                    file=sys.stderr,
+                )
+            print(
+                f"[hn] Emitting Customer.io for {len(unemitted)} posters…",
+                file=sys.stderr,
+            )
+            await emit_hacknews_posts_events(unemitted)
+            for p in unemitted:
+                db.mark_event_emitted(_HN_SOURCE_KEY, p.username)
+
+    total = db._conn.execute(
+        "SELECT COUNT(*) FROM participants WHERE hackathon_url=?", (_HN_SOURCE_KEY,)
+    ).fetchone()[0]
+    with_email = db._conn.execute(
+        "SELECT COUNT(*) FROM participants WHERE hackathon_url=? AND email != ''",
+        (_HN_SOURCE_KEY,),
+    ).fetchone()[0]
+    print(f"\n{'=' * 60}", file=sys.stderr)
+    print("[hn] Done.", file=sys.stderr)
+    print(f"  source: {_HN_SOURCE_KEY}", file=sys.stderr)
+    print(f"  posters in db: {total}", file=sys.stderr)
+    print(f"  with email: {with_email}", file=sys.stderr)
+    print(f"  db: {db_path}", file=sys.stderr)
+    db.close()
+
+
+async def _run_hn_unsent(db_path: str) -> None:
+    from devpost_scraper.db import HarvestDB
+
+    db = HarvestDB(db_path)
+    unsent = db.all_unemitted_hn_participants()
+    if not unsent:
+        print("[hn] No unsent HN posters.", file=sys.stderr)
+        db.close()
+        return
+
+    print(f"[hn] {len(unsent)} unsent HN posters…", file=sys.stderr)
+    await emit_hacknews_posts_events(unsent)
+    for p in unsent:
+        db.mark_event_emitted(p.hackathon_url, p.username)
+    print(f"[hn] Done. {len(unsent)} events emitted.", file=sys.stderr)
+    db.close()
+
+
+def hn_harvest_main() -> None:
+    load_dotenv(_ENV_FILE, override=True)
+    if len(sys.argv) == 1:
+        _print_landing()
+        print("Tip: run `signalforge-hn --help` for full usage.")
+        return
+
+    parser = argparse.ArgumentParser(
+        prog="signalforge-hn",
+        description=(
+            "Scrape Hacker News Show HN posts, filter to GitHub links, mine repo owner "
+            "emails via GitHub API, store in SQLite, and emit hacknews_posts Customer.io events."
+        ),
+    )
+    parser.add_argument(
+        "--pages",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of HN Show pages to scrape (default: 1, ~30 posts each)",
+    )
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        default="devpost_harvest.db",
+        help="SQLite database path (default: devpost_harvest.db)",
+    )
+    parser.add_argument(
+        "--no-email",
+        action="store_true",
+        default=False,
+        help="Skip email enrichment — just store posters in the DB",
+    )
+    parser.add_argument(
+        "--force-email",
+        action="store_true",
+        default=False,
+        help="Re-run email enrichment even for posters already in the DB",
+    )
+    parser.add_argument(
+        "--emit-events",
+        action="store_true",
+        default=False,
+        help="Emit hacknews_posts events to Customer.io for newly enriched posters",
+    )
+    parser.add_argument(
+        "--emit-limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Cap --emit-events to N posters (0 = all). Useful for testing.",
+    )
+    parser.add_argument(
+        "--emit-unsent",
+        action="store_true",
+        default=False,
+        help="Skip scraping — emit hacknews_posts events for all unsent posters in the DB.",
+    )
+    argcomplete.autocomplete(parser)
+    args = parser.parse_args()
+
+    if args.emit_unsent:
+        asyncio.run(_run_hn_unsent(db_path=args.db))
+        return
+
+    asyncio.run(
+        _run_hn_harvest(
+            pages=args.pages,
+            db_path=args.db,
+            no_email=args.no_email,
+            force_email=args.force_email,
+            emit_events=args.emit_events,
+            emit_limit=args.emit_limit,
         )
     )
 
@@ -2024,6 +2267,7 @@ def harvest_main() -> None:
         dest="statuses",
         help="Hackathon status filter (repeatable, default: open). e.g. --status open --status ended",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     if args.statuses is None:
@@ -2236,6 +2480,7 @@ def lookup_main() -> None:
         default="devpost_harvest.db",
         help="SQLite database path (default: devpost_harvest.db)",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     from devpost_scraper.db import HarvestDB
@@ -2340,6 +2585,7 @@ def rb2b_main() -> None:
         default=None,
         help="Download the export for a specific date (e.g. 2026-03-31) and import it",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     needs_session = args.list_exports or args.fetch_latest or args.fetch_date
@@ -2471,11 +2717,22 @@ async def _run_auto(
                 force_email=False,
             )
 
+    # ── 5. HN Show — scrape all available pages ───────────────────────────────
+    _auto_step(5, "HN Show — GitHub-linked posts (all available pages)")
+    await _run_hn_harvest(
+        pages=100,
+        db_path=db_path,
+        no_email=no_email,
+        emit_events=False,
+        force_email=False,
+    )
+
     print(
         "\n[auto] All done. Run emit-unsent on each source to flush the queue:\n"
         "  signalforge-harvest --emit-unsent\n"
         "  signalforge-github-forks --emit-unsent\n"
         "  signalforge-gh-search --emit-unsent\n"
+        "  signalforge-hn --emit-unsent\n"
         "  signalforge-rb2b --emit-unsent",
         file=sys.stderr,
     )
@@ -2491,7 +2748,8 @@ def auto_main() -> None:
             "  1. RB2B: fetch today's visitor export\n"
             "  2. Harvest: walk open Devpost hackathons\n"
             "  3. Forks: refresh every GitHub repo already in the DB\n"
-            "  4. Search: delta-scrape every GitHub search query already in the DB\n\n"
+            "  4. Search: delta-scrape every GitHub search query already in the DB\n"
+            "  5. HN: scrape all available Show HN GitHub posts\n\n"
             "After this completes, run --emit-unsent on each source to fire Customer.io events."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2534,6 +2792,7 @@ def auto_main() -> None:
         default=None,
         help="Devpost session cookie. Falls back to DEVPOST_SESSION in .env",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     from datetime import date as _date
@@ -2591,7 +2850,9 @@ def auto_batch_main() -> None:
             "  1. RB2B: fetch today's visitor export\n"
             "  2. Harvest: walk open Devpost hackathons\n"
             "  3. Forks: refresh every GitHub repo already in the DB\n"
-            "  4. Emit: flush up to --batch-size events from each source bucket\n\n"
+            "  4. Search: delta-scrape every GitHub search query in the DB\n"
+            "  5. HN: scrape all available Show HN GitHub posts\n"
+            "  6. Emit: flush up to --batch-size events from each source bucket\n\n"
             "Schedule this daily and the queue self-manages."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2610,6 +2871,7 @@ def auto_batch_main() -> None:
                         help="Skip email enrichment for harvest and forks")
     parser.add_argument("--jwt", metavar="TOKEN", default=None,
                         help="Devpost session cookie. Falls back to DEVPOST_SESSION in .env")
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
 
     from datetime import date as _date
@@ -3381,6 +3643,7 @@ def assistant_main() -> None:
         default="devpost_harvest.db",
         help="SQLite database path (default: devpost_harvest.db)",
     )
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
     load_dotenv(_ENV_FILE, override=True)
     try:
@@ -3468,6 +3731,7 @@ def campaigns_main() -> None:
     p_update.add_argument("--file", required=True, metavar="PATH",
                           help="Local HTML file listed in emails/manifest.json")
 
+    argcomplete.autocomplete(parser)
     args = parser.parse_args()
     load_dotenv(_ENV_FILE, override=True)
 
@@ -3497,3 +3761,105 @@ def campaigns_main() -> None:
     except RuntimeError as exc:
         print(f"[error] {exc}", file=sys.stderr)
         sys.exit(1)
+
+
+# ── signalforge-run ────────────────────────────────────────────────────────────
+
+_RUN_ALIASES: dict[str, str] = {
+    "harvest":      "signalforge-harvest",
+    "hn":           "signalforge-hn",
+    "gh-search":    "signalforge-gh-search",
+    "forks":        "signalforge-github-forks",
+    "devto":        "signalforge-devto",
+    "rb2b":         "signalforge-rb2b",
+    "emit-all":     "signalforge-emit-all",
+    "emit-batch":   "signalforge-emit-batch",
+    "auto":         "signalforge-auto",
+    "auto-batch":   "signalforge-auto-batch",
+    "participants": "signalforge-participants",
+    "search":       "signalforge-devpost-search",
+    "lookup":       "signalforge-lookup",
+    "assistant":    "signalforge-assistant",
+    "campaigns":    "signalforge-campaigns",
+}
+
+
+def run_main() -> None:
+    """Transparent wrapper: run any signalforge subcommand and track it in SQLite."""
+    import subprocess
+    from datetime import datetime, timezone
+
+    from devpost_scraper.db import HarvestDB, _now_iso
+
+    parser = argparse.ArgumentParser(
+        prog="signalforge-run",
+        description=(
+            "Run a SignalForge subcommand and record it in the DB.\n\n"
+            "Short aliases: harvest, hn, gh-search, forks, devto, rb2b,\n"
+            "  emit-all, emit-batch, auto, auto-batch, participants, search,\n"
+            "  lookup, assistant, campaigns\n\n"
+            "Or pass the full command name (e.g. signalforge-harvest).\n"
+            "All remaining arguments are forwarded to the subcommand."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--db",
+        default=os.getenv("SIGNALFORGE_DB", "devpost_harvest.db"),
+        metavar="PATH",
+        help="SQLite DB path (default: devpost_harvest.db)",
+    )
+    parser.add_argument(
+        "command",
+        help="Subcommand alias or full command name",
+    )
+    parser.add_argument(
+        "args",
+        nargs=argparse.REMAINDER,
+        help="Arguments forwarded to the subcommand",
+    )
+    argcomplete.autocomplete(parser)
+    parsed = parser.parse_args()
+
+    cmd_args = [a for a in (parsed.args or []) if a != "--"]
+    full_cmd = _RUN_ALIASES.get(parsed.command, parsed.command)
+    display = f"{full_cmd} {' '.join(cmd_args)}".strip()
+
+    db = HarvestDB(parsed.db)
+    run_id = db.create_run(full_cmd, cmd_args)
+
+    _dim   = "\033[2m"  if sys.stdout.isatty() else ""
+    _reset = "\033[0m"  if sys.stdout.isatty() else ""
+    _bold  = "\033[1m"  if sys.stdout.isatty() else ""
+    _green = "\033[32m" if sys.stdout.isatty() else ""
+    _red   = "\033[31m" if sys.stdout.isatty() else ""
+
+    print(f"{_dim}[run #{run_id}] {display}{_reset}")
+
+    argv = [full_cmd] + cmd_args
+    proc = subprocess.Popen(argv)
+    db.update_run(run_id, pid=proc.pid, status="running")
+    print(f"{_dim}[run #{run_id}] pid {proc.pid}{_reset}\n")
+
+    try:
+        rc = proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        try:
+            rc = proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            rc = proc.wait()
+        db.update_run(run_id, pid=proc.pid, status="interrupted",
+                      exit_code=rc, finished_at=_now_iso())
+        print(f"\n{_dim}[run #{run_id}] interrupted{_reset}")
+        db.close()
+        sys.exit(rc)
+
+    status = "done" if rc == 0 else "failed"
+    db.update_run(run_id, pid=proc.pid, status=status,
+                  exit_code=rc, finished_at=_now_iso())
+    label = f"{_green}done{_reset}" if rc == 0 else f"{_red}failed (exit {rc}){_reset}"
+    print(f"\n{_dim}[run #{run_id}]{_reset} {_bold}{label}{_reset}")
+    db.close()
+    sys.exit(rc)

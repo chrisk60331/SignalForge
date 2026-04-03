@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -9,6 +11,17 @@ from devpost_scraper.models import Hackathon, HackathonParticipant, Rb2bVisitor
 _DEFAULT_DB = "devpost_harvest.db"
 
 _SCHEMA = """\
+CREATE TABLE IF NOT EXISTS runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    command     TEXT NOT NULL,
+    args        TEXT NOT NULL DEFAULT '[]',
+    pid         INTEGER,
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    exit_code   INTEGER,
+    status      TEXT NOT NULL DEFAULT 'running'
+);
+
 CREATE TABLE IF NOT EXISTS devto_challenges (
     tag             TEXT PRIMARY KEY,
     title           TEXT,
@@ -253,12 +266,14 @@ class HarvestDB:
         ]
 
     def all_unemitted_participants(self) -> list[HackathonParticipant]:
-        """Return Devpost-only participants with email but no event emitted (excludes GitHub forks and dev.to)."""
+        """Return Devpost-only participants with email but no event emitted (excludes GitHub forks, dev.to, and HN)."""
         rows = self._conn.execute(
             "SELECT * FROM participants "
             "WHERE email != '' AND event_emitted_at IS NULL "
             "AND hackathon_url NOT LIKE 'github:forks:%' "
-            "AND hackathon_url NOT LIKE 'devto:challenge:%'"
+            "AND hackathon_url NOT LIKE 'github:search:%' "
+            "AND hackathon_url NOT LIKE 'devto:challenge:%' "
+            "AND hackathon_url NOT LIKE 'hn:show%'"
         ).fetchall()
         return [
             HackathonParticipant(
@@ -458,6 +473,29 @@ class HarvestDB:
             for r in rows
         ]
 
+    def all_unemitted_hn_participants(self) -> list[HackathonParticipant]:
+        """Return Hacker News Show HN posters with email but no event emitted."""
+        rows = self._conn.execute(
+            "SELECT * FROM participants "
+            "WHERE email != '' AND event_emitted_at IS NULL "
+            "AND hackathon_url LIKE 'hn:show%' "
+            "ORDER BY hackathon_url"
+        ).fetchall()
+        return [
+            HackathonParticipant(
+                hackathon_url=r["hackathon_url"],
+                hackathon_title=r["hackathon_title"] or "",
+                username=r["username"],
+                name=r["name"] or "",
+                specialty=r["specialty"] or "",
+                profile_url=r["profile_url"] or "",
+                github_url=r["github_url"] or "",
+                linkedin_url=r["linkedin_url"] or "",
+                email=r["email"] or "",
+            )
+            for r in rows
+        ]
+
     # ------------------------------------------------------------------
     # RB2B visitors
     # ------------------------------------------------------------------
@@ -541,6 +579,55 @@ class HarvestDB:
         ).fetchone()[0]
         return {"total": total, "identified": identified, "events_emitted": emitted}
 
+    # ------------------------------------------------------------------
+    # Runs — job tracking
+    # ------------------------------------------------------------------
+
+    def create_run(self, command: str, args: list[str]) -> int:
+        """Insert a new run record (status='running') and return its id."""
+        cur = self._conn.execute(
+            "INSERT INTO runs (command, args, started_at, status) VALUES (?, ?, ?, 'running')",
+            (command, json.dumps(args), _now_iso()),
+        )
+        self._conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def update_run(
+        self,
+        run_id: int,
+        *,
+        pid: int | None = None,
+        status: str,
+        exit_code: int | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        self._conn.execute(
+            """UPDATE runs
+               SET pid=?, status=?, exit_code=?, finished_at=?
+               WHERE id=?""",
+            (pid, status, exit_code, finished_at, run_id),
+        )
+        self._conn.commit()
+
+    def recent_runs(self, limit: int = 10) -> list["RunRecord"]:
+        rows = self._conn.execute(
+            "SELECT * FROM runs ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            RunRecord(
+                id=r["id"],
+                command=r["command"],
+                args=json.loads(r["args"] or "[]"),
+                pid=r["pid"],
+                started_at=r["started_at"] or "",
+                finished_at=r["finished_at"] or "",
+                exit_code=r["exit_code"],
+                status=r["status"] or "running",
+            )
+            for r in rows
+        ]
+
     def stats(self) -> dict[str, int]:
         hcount = self._conn.execute("SELECT COUNT(*) FROM hackathons").fetchone()[0]
         pcount = self._conn.execute("SELECT COUNT(*) FROM participants").fetchone()[0]
@@ -556,6 +643,18 @@ class HarvestDB:
             "with_email": with_email,
             "events_emitted": emitted,
         }
+
+
+@dataclass
+class RunRecord:
+    id: int
+    command: str
+    args: list[str]
+    pid: int | None
+    started_at: str
+    finished_at: str
+    exit_code: int | None
+    status: str  # running | done | failed | interrupted
 
 
 def _now_iso() -> str:
