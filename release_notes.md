@@ -5,3 +5,10 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.7.3/)*
+
+## [0.7.4] — 2026-04-02
+
+- Fixed a bug where organization name defaults to empty string if missing.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.7.4/)*

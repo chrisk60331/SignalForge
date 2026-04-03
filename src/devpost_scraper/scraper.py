@@ -280,7 +280,7 @@ async def list_hackathons(
             "id": item.get("id", 0),
             "title": item.get("title", ""),
             "url": item.get("url", "").rstrip("/"),
-            "organization_name": item.get("organization_name", ""),
+            "organization_name": item.get("organization_name") or "",
             "open_state": item.get("open_state", ""),
             "submission_period_dates": item.get("submission_period_dates", ""),
             "registrations_count": item.get("registrations_count", 0),
