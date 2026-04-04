@@ -51,3 +51,11 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.11.0/)*
+
+## [0.11.1] — 2026-04-04
+
+- Refactored CLI modules for better organization.
+- Reduced the complexity of the status script.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.11.1/)*

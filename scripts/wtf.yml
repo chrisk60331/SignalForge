@@ -11,51 +11,29 @@ wtf:
       normal: gray
   grid:
     columns: [47, 47, 47, 47]
-    rows: [12,9,9,9]
+    rows: [12,6,6,6,6]
   refreshInterval: 60
 
   mods:
 
-    runs:
+
+
+    banner:
       type: cmdrunner
-      title: "  Runs"
+      title: "  SignalForge — Always Be Scraping"
       cmd: "bash"
-      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "runs"]
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "banner"]
       enabled: true
+      color:
+        text: "green"
       position:
         top: 0
         left: 0
         height: 1
-        width: 1
+        width: 4
       refreshInterval: 30s
 
-    banner:
-      type: cmdrunner
-      title: "  SignalForge — WTF terminal dashboard"
-      cmd: "bash"
-      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "banner"]
-      enabled: true
-      position:
-        top: 0
-        left: 1
-        height: 1
-        width: 2
-      refreshInterval: 30s
-
-    freshness:
-      type: cmdrunner
-      title: "  Staleness"
-      cmd: "bash"
-      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "freshness"]
-      enabled: true
-      position:
-        top: 0
-        left: 3
-        height: 1
-        width: 1
-      refreshInterval: 30s
-
-    # ── Row 0, Left ──────────────────────────────────────────────────────────
     hackathons:
       type: cmdrunner
       title: "🏆  Devpost — Hackathons"
@@ -66,10 +44,9 @@ wtf:
         top: 1
         left: 0
         height: 1
-        width: 2
+        width: 1
       refreshInterval: 30s
 
-        # ── Row 1, Right ─────────────────────────────────────────────────────────
     hn:
       type: cmdrunner
       title: "🟠  HN Show — GitHub Posts"
@@ -78,9 +55,37 @@ wtf:
       enabled: true
       position:
         top: 1
-        left: 2
+        left: 1
         height: 1
-        width: 2
+        width: 1
+      refreshInterval: 30s
+
+    sdfssa567567dadfa:
+      type: cmdrunner
+      focusable: false
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 1
+        left: 2
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+
+    sdfssweqwead657567adfa:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 1
+        left: 3
+        height: 1 
+        width: 1
       refreshInterval: 30s
 
     # ── Row 1, Left ──────────────────────────────────────────────────────────
@@ -91,10 +96,10 @@ wtf:
       args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "forks"]
       enabled: true
       position:
-        top: 3
-        left: 2
+        top: 2
+        left: 0
         height: 1
-        width: 2
+        width: 1
       refreshInterval: 30s
 
     # ── Row 1, Right ─────────────────────────────────────────────────────────
@@ -106,12 +111,39 @@ wtf:
       enabled: true
       position:
         top: 2
-        left: 0
+        left: 1
         height: 1
-        width: 2
+        width: 1
       refreshInterval: 30s
 
-    # ── Row 2, Left ──────────────────────────────────────────────────────────
+    sdfssweqw34534345eadadfa:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 2
+        left: 2
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+
+    sdfssweqweadadfasd45345asda:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 2
+        left: 3
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+
     search:
       type: cmdrunner
       title: "🔍  GitHub Search"
@@ -122,12 +154,54 @@ wtf:
         top: 3
         left: 0
         height: 1
-        width: 2
+        width: 1
       refreshInterval: 30s
 
-    # ── Row 2, Right ─────────────────────────────────────────────────────────
 
-    # ── Row 3, Left ──────────────────────────────────────────────────────────
+    sdfs234234adfa:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 3
+        left: 1
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+
+
+    sdfssaasdsddwqead5467878fa:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 3
+        left: 2
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+
+
+    sdfssaasdsd45345378dwqeadfa:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 3
+        left: 3
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+
     rb2b:
       type: cmdrunner
       title: "👁   RB2B — Visitors"
@@ -135,13 +209,68 @@ wtf:
       args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "rb2b"]
       enabled: true
       position:
-        top: 2
-        left: 2
+        top: 4
+        left: 0
         height: 1 
-        width: 2
+        width: 1
       refreshInterval: 30s
 
-    # ── Row 0, Right ─────────────────────────────────────────────────────────
+    sdfsadfa:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 4
+        left: 1
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+    
+
+    sdfssaasdsqwewddwqeadfa:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 4
+        left: 2
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+
+    sdfssaasdsddqweqwwqeadfa:
+      type: cmdrunner
+      title: "Empty Campaign Slot"
+      cmd: "bash"
+      focusable: false
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "empty"]
+      enabled: true
+      position:
+        top: 4
+        left: 3
+        height: 1 
+        width: 1
+      refreshInterval: 30s
+
+    runs:
+      type: cmdrunner
+      title: "  Runs"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "runs"]
+      enabled: true
+      position:
+        top: 5
+        left: 0
+        height: 1
+        width: 1
+      refreshInterval: 30s
+
     summary:
       type: cmdrunner
       title: "📊  Summary"
@@ -149,8 +278,22 @@ wtf:
       args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "summary"]
       enabled: true
       position:
-        top: 4
+        top: 5
         left: 1
         height: 1
         width: 2
+      refreshInterval: 30s
+
+  
+    freshness:
+      type: cmdrunner
+      title: "  Staleness"
+      cmd: "bash"
+      args: ["/Users/chris/PycharmProjects/devpost_scraper/scripts/wtf-panel.sh", "freshness"]
+      enabled: true
+      position:
+        top: 5
+        left: 3
+        height: 1
+        width: 1
       refreshInterval: 30s

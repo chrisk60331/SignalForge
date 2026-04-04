@@ -1,6 +1,6 @@
 [project]
 name = "signalforge-cli"
-version = "0.11.0"
+version = "0.11.1"
 description = "CLI for extracting emails and sending customer.io events"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,23 +15,23 @@ dependencies = [
 ]
 
 [project.scripts]
-signalforge = "devpost_scraper.cli:landing_main"
-signalforge-devpost-search = "devpost_scraper.cli:main"
-signalforge-participants = "devpost_scraper.cli:participants_main"
-signalforge-harvest = "devpost_scraper.cli:harvest_main"
-signalforge-github-forks = "devpost_scraper.cli:github_forks_main"
-signalforge-rb2b = "devpost_scraper.cli:rb2b_main"
-signalforge-auto = "devpost_scraper.cli:auto_main"
-signalforge-lookup = "devpost_scraper.cli:lookup_main"
-signalforge-gh-search = "devpost_scraper.cli:github_search_main"
-signalforge-emit-all = "devpost_scraper.cli:emit_all_main"
-signalforge-emit-batch = "devpost_scraper.cli:emit_batch_main"
-signalforge-auto-batch = "devpost_scraper.cli:auto_batch_main"
-signalforge-assistant = "devpost_scraper.cli:assistant_main"
-signalforge-campaigns = "devpost_scraper.cli:campaigns_main"
-signalforge-devto = "devpost_scraper.cli:devto_harvest_main"
-signalforge-hn = "devpost_scraper.cli:hn_harvest_main"
-signalforge-run = "devpost_scraper.cli:run_main"
+signalforge = "devpost_scraper.cli_shared:landing_main"
+signalforge-devpost-search = "devpost_scraper.cli_search:main"
+signalforge-participants = "devpost_scraper.cli_participants:participants_main"
+signalforge-harvest = "devpost_scraper.cli_harvest:harvest_main"
+signalforge-github-forks = "devpost_scraper.cli_github_forks:github_forks_main"
+signalforge-rb2b = "devpost_scraper.cli_rb2b:rb2b_main"
+signalforge-auto = "devpost_scraper.cli_auto:auto_main"
+signalforge-lookup = "devpost_scraper.cli_lookup:lookup_main"
+signalforge-gh-search = "devpost_scraper.cli_github_search:github_search_main"
+signalforge-emit-all = "devpost_scraper.cli_emit:emit_all_main"
+signalforge-emit-batch = "devpost_scraper.cli_emit:emit_batch_main"
+signalforge-auto-batch = "devpost_scraper.cli_auto:auto_batch_main"
+signalforge-assistant = "devpost_scraper.cli_assistant:assistant_main"
+signalforge-campaigns = "devpost_scraper.cli_campaigns:campaigns_main"
+signalforge-devto = "devpost_scraper.cli_devto:devto_harvest_main"
+signalforge-hn = "devpost_scraper.cli_hn:hn_harvest_main"
+signalforge-run = "devpost_scraper.cli_run:run_main"
 
 [build-system]
 requires = [
