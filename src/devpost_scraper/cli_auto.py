@@ -12,8 +12,12 @@ from dotenv import load_dotenv
 from devpost_scraper.cli_shared import (
     _ENV_FILE,
     _PARTICIPANTS_JWT_KEY,
+    _DEVTO_SESSION_KEY,
+    _DEVTO_REMEMBER_KEY,
+    _DEVTO_CURRENT_USER_KEY,
     track_run,
 )
+from devpost_scraper.cli_devto import _run_devto_harvest
 from devpost_scraper.cli_emit import _run_emit_batch
 from devpost_scraper.cli_github_forks import _run_github_forks
 from devpost_scraper.cli_github_search import _run_github_search
@@ -34,6 +38,9 @@ async def _run_auto(
     fork_limit: int,
     no_email: bool,
     jwt_token: str,
+    devto_session: str = "",
+    devto_remember: str = "",
+    devto_current_user: str = "",
 ) -> None:
     import sqlite3 as _sqlite3
 
@@ -139,12 +146,36 @@ async def _run_auto(
         force_email=False,
     )
 
+    # ── 6. dev.to challenges — active + previous ──────────────────────────────
+    _auto_step(6, "dev.to — active & previous challenges")
+    if not devto_session:
+        print(
+            f"[auto] dev.to step skipped — no session cookie.\n"
+            f"  Set {_DEVTO_SESSION_KEY} in .env to enable.",
+            file=sys.stderr,
+        )
+    else:
+        try:
+            await _run_devto_harvest(
+                db_path=db_path,
+                session=devto_session,
+                remember_token=devto_remember,
+                current_user=devto_current_user,
+                no_email=no_email,
+                emit_events=False,
+                rescrape=True,
+                states=["active"],
+            )
+        except SystemExit as exc:
+            print(f"[auto] dev.to step failed: {exc}", file=sys.stderr)
+
     print(
         "\n[auto] All done. Run emit-unsent on each source to flush the queue:\n"
         "  signalforge-harvest --emit-unsent\n"
         "  signalforge-github-forks --emit-unsent\n"
         "  signalforge-gh-search --emit-unsent\n"
         "  signalforge-hn --emit-unsent\n"
+        "  signalforge-devto --emit-unsent\n"
         "  signalforge-rb2b --emit-unsent",
         file=sys.stderr,
     )
@@ -158,6 +189,9 @@ async def _run_auto_batch(
     no_email: bool,
     jwt_token: str,
     batch_size: int,
+    devto_session: str = "",
+    devto_remember: str = "",
+    devto_current_user: str = "",
 ) -> None:
     """Run full daily scrape then immediately emit one batch from each source bucket."""
     await _run_auto(
@@ -167,6 +201,9 @@ async def _run_auto_batch(
         fork_limit=fork_limit,
         no_email=no_email,
         jwt_token=jwt_token,
+        devto_session=devto_session,
+        devto_remember=devto_remember,
+        devto_current_user=devto_current_user,
     )
     print("\n[auto-batch] Scrape done — emitting batch…", file=sys.stderr)
     await _run_emit_batch(db_path=db_path, batch_size=batch_size)
@@ -184,7 +221,8 @@ def auto_main() -> None:
             "  2. Harvest: walk open Devpost hackathons\n"
             "  3. Forks: refresh every GitHub repo already in the DB\n"
             "  4. Search: delta-scrape every GitHub search query already in the DB\n"
-            "  5. HN: scrape all available Show HN GitHub posts\n\n"
+            "  5. HN: scrape all available Show HN GitHub posts\n"
+            "  6. dev.to: scrape active & previous challenge submitters\n\n"
             "After this completes, run --emit-unsent on each source to fire Customer.io events."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -223,6 +261,9 @@ def auto_main() -> None:
             fork_limit=args.fork_limit,
             no_email=args.no_email,
             jwt_token=jwt_token,
+            devto_session=os.getenv(_DEVTO_SESSION_KEY, "").strip(),
+            devto_remember=os.getenv(_DEVTO_REMEMBER_KEY, "").strip(),
+            devto_current_user=os.getenv(_DEVTO_CURRENT_USER_KEY, "").strip(),
         )
     )
 
@@ -240,7 +281,8 @@ def auto_batch_main() -> None:
             "  3. Forks: refresh every GitHub repo already in the DB\n"
             "  4. Search: delta-scrape every GitHub search query in the DB\n"
             "  5. HN: scrape all available Show HN GitHub posts\n"
-            "  6. Emit: flush up to --batch-size events from each source bucket\n\n"
+            "  6. dev.to: scrape active & previous challenge submitters\n"
+            "  7. Emit: flush up to --batch-size events from each source bucket\n\n"
             "Schedule this daily and the queue self-manages."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -282,5 +324,8 @@ def auto_batch_main() -> None:
             no_email=args.no_email,
             jwt_token=jwt_token,
             batch_size=args.batch_size,
+            devto_session=os.getenv(_DEVTO_SESSION_KEY, "").strip(),
+            devto_remember=os.getenv(_DEVTO_REMEMBER_KEY, "").strip(),
+            devto_current_user=os.getenv(_DEVTO_CURRENT_USER_KEY, "").strip(),
         )
     )

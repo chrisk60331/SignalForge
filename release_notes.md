@@ -68,3 +68,12 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.12.0/)*
+
+## [0.13.0] — 2026-04-04
+
+- Add script for status freshness check.
+- Introduce CLI automation for Devpost scraper.
+- Include configuration file `wtf.yml`.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.13.0/)*

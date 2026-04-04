@@ -128,7 +128,7 @@ wtf:
         left: 2
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 5s
 
     sdfssweqweadadfasd45345asda:
       type: cmdrunner
@@ -142,7 +142,7 @@ wtf:
         left: 3
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 5s
 
     search:
       type: cmdrunner
@@ -170,7 +170,7 @@ wtf:
         left: 1
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 5s
 
 
     sdfssaasdsddwqead5467878fa:
@@ -185,7 +185,7 @@ wtf:
         left: 2
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 5s
 
 
     sdfssaasdsd45345378dwqeadfa:
@@ -200,7 +200,7 @@ wtf:
         left: 3
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 5s
 
     rb2b:
       type: cmdrunner
@@ -227,7 +227,7 @@ wtf:
         left: 1
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 5s
     
 
     sdfssaasdsqwewddwqeadfa:
@@ -242,7 +242,7 @@ wtf:
         left: 2
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 5s
 
     sdfssaasdsddqweqwwqeadfa:
       type: cmdrunner
@@ -256,7 +256,7 @@ wtf:
         left: 3
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 5s
 
     runs:
       type: cmdrunner
