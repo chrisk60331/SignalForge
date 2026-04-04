@@ -59,3 +59,12 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.11.1/)*
+
+## [0.12.0] — 2026-04-04
+
+- Add initial set of scripts in `scripts/` directory.
+- Implement various CLI tools in `src/devpost_scraper/`.
+- Introduce scraping functionalities for Devpost, GitHub, and other platforms.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.12.0/)*
