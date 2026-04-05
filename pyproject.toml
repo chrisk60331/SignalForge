@@ -1,6 +1,6 @@
 [project]
 name = "signalforge-cli"
-version = "0.13.0"
+version = "0.14.0"
 description = "CLI for extracting emails and sending customer.io events"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,6 +32,7 @@ signalforge-campaigns = "devpost_scraper.cli_campaigns:campaigns_main"
 signalforge-devto = "devpost_scraper.cli_devto:devto_harvest_main"
 signalforge-hn = "devpost_scraper.cli_hn:hn_harvest_main"
 signalforge-run = "devpost_scraper.cli_run:run_main"
+signalforge-report = "devpost_scraper.cli_report:report_main"
 
 [build-system]
 requires = [

@@ -72,7 +72,7 @@ wtf:
         left: 2
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 7s
 
     sdfssweqwead657567adfa:
       type: cmdrunner
@@ -86,7 +86,7 @@ wtf:
         left: 3
         height: 1 
         width: 1
-      refreshInterval: 30s
+      refreshInterval: 8s
 
     # ── Row 1, Left ──────────────────────────────────────────────────────────
     forks:
@@ -142,7 +142,7 @@ wtf:
         left: 3
         height: 1 
         width: 1
-      refreshInterval: 5s
+      refreshInterval: 6s
 
     search:
       type: cmdrunner
@@ -170,7 +170,7 @@ wtf:
         left: 1
         height: 1 
         width: 1
-      refreshInterval: 5s
+      refreshInterval: 10s
 
 
     sdfssaasdsddwqead5467878fa:
@@ -185,7 +185,7 @@ wtf:
         left: 2
         height: 1 
         width: 1
-      refreshInterval: 5s
+      refreshInterval: 11s
 
 
     sdfssaasdsd45345378dwqeadfa:
@@ -200,7 +200,7 @@ wtf:
         left: 3
         height: 1 
         width: 1
-      refreshInterval: 5s
+      refreshInterval: 12s
 
     rb2b:
       type: cmdrunner
@@ -227,7 +227,7 @@ wtf:
         left: 1
         height: 1 
         width: 1
-      refreshInterval: 5s
+      refreshInterval: 4s
     
 
     sdfssaasdsqwewddwqeadfa:
@@ -242,7 +242,7 @@ wtf:
         left: 2
         height: 1 
         width: 1
-      refreshInterval: 5s
+      refreshInterval: 8s
 
     sdfssaasdsddqweqwwqeadfa:
       type: cmdrunner
@@ -256,7 +256,7 @@ wtf:
         left: 3
         height: 1 
         width: 1
-      refreshInterval: 5s
+      refreshInterval: 14s
 
     runs:
       type: cmdrunner

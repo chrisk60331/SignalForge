@@ -77,3 +77,12 @@
 
 ---
 *Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.13.0/)*
+
+## [0.14.0] — 2026-04-05
+
+- Introduced `signalforge-report` command for reporting.
+- Fixed freshness indicator functionality.
+- Resolved GitHub forks enrichment issue.
+
+---
+*Released by [Rel-Ease](https://github.com/chrisk60331/Rel-Ease) · [signalforge-cli](https://pypi.org/project/signalforge-cli/0.14.0/)*

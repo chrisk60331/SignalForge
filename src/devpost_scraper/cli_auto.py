@@ -229,10 +229,10 @@ def auto_main() -> None:
     )
     parser.add_argument("--db", metavar="PATH", default="devpost_harvest.db",
                         help="SQLite database path (default: devpost_harvest.db)")
-    parser.add_argument("--pages", type=int, default=1000, metavar="N",
-                        help="Devpost hackathon listing pages to fetch (default: 100)")
-    parser.add_argument("--fork-limit", type=int, default=5000, metavar="N",
-                        help="Max forks to process per GitHub repo (default: 5000)")
+    parser.add_argument("--pages", type=int, default=10000, metavar="N",
+                        help="Devpost hackathon listing pages to fetch (default: 10000)")
+    parser.add_argument("--fork-limit", type=int, default=10000, metavar="N",
+                        help="Max forks to process per GitHub repo (default: 10000)")
     parser.add_argument("--fetch-date", metavar="YYYY-MM-DD", default=None,
                         help="RB2B export date to fetch (default: today)")
     parser.add_argument("--no-email", action="store_true", default=False,
@@ -289,10 +289,10 @@ def auto_batch_main() -> None:
     )
     parser.add_argument("--db", metavar="PATH", default="devpost_harvest.db",
                         help="SQLite database path (default: devpost_harvest.db)")
-    parser.add_argument("--pages", type=int, default=1000, metavar="N",
-                        help="Devpost listing pages to fetch (default: 100)")
-    parser.add_argument("--fork-limit", type=int, default=5000, metavar="N",
-                        help="Max forks per GitHub repo (default: 5000)")
+    parser.add_argument("--pages", type=int, default=10000, metavar="N",
+                        help="Devpost listing pages to fetch (default: 10000)")
+    parser.add_argument("--fork-limit", type=int, default=10000, metavar="N",
+                        help="Max forks per GitHub repo (default: 10000)")
     parser.add_argument("--fetch-date", metavar="YYYY-MM-DD", default=None,
                         help="RB2B export date (default: today)")
     parser.add_argument("--batch-size", type=int, default=2000, metavar="N",

@@ -15,6 +15,7 @@ from devpost_scraper.cli_hn import hn_harvest_main
 from devpost_scraper.cli_lookup import lookup_main
 from devpost_scraper.cli_participants import participants_main
 from devpost_scraper.cli_rb2b import rb2b_main
+from devpost_scraper.cli_report import report_main
 from devpost_scraper.cli_run import run_main
 from devpost_scraper.cli_search import main
 from devpost_scraper.cli_shared import landing_main
@@ -37,4 +38,5 @@ __all__ = [
     "devto_harvest_main",
     "hn_harvest_main",
     "run_main",
+    "report_main",
 ]

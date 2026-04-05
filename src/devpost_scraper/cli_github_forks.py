@@ -122,6 +122,9 @@ async def _run_github_forks(
             file=sys.stderr,
         )
         sem = asyncio.Semaphore(_FORK_EMAIL_CONCURRENCY)
+        _save_lock = asyncio.Lock()
+        _pending_save: list[HackathonParticipant] = []
+        _GH_SAVE_EVERY = 10
 
         async def _enrich_one(p: HackathonParticipant) -> None:
             async with sem:
@@ -133,8 +136,27 @@ async def _run_github_forks(
                 except Exception as exc:
                     print(f"  [warn] enrich failed for {p.username}: {exc}", file=sys.stderr)
 
+            async with _save_lock:
+                _pending_save.append(p)
+                if len(_pending_save) >= _GH_SAVE_EVERY:
+                    batch = _pending_save[:]
+                    _pending_save.clear()
+                    db.update_participant_enrichment_batch(batch)
+                    print(
+                        f"  [save] {len(batch)} records written to DB "
+                        f"({sum(1 for x in batch if x.email)} with email)",
+                        file=sys.stderr,
+                    )
+
         await asyncio.gather(*(_enrich_one(p) for p in to_enrich))
-        db.update_participant_enrichment_batch(to_enrich)
+
+        if _pending_save:
+            db.update_participant_enrichment_batch(_pending_save)
+            print(
+                f"  [save] {len(_pending_save)} remaining records written to DB "
+                f"({sum(1 for x in _pending_save if x.email)} with email)",
+                file=sys.stderr,
+            )
 
     src = _github_fork_source_key(owner, repo)
     if emit_events and not no_email:
